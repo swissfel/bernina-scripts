@@ -1,0 +1,38 @@
+name: bernina38_escape
+channels:
+- conda-forge
+- paulscherrerinstitute
+- anaconda
+dependencies:
+- python=3.8*
+- numpy
+- scipy
+- matplotlib
+- h5py  
+- zarr  
+- ipython
+- jupyter
+- jupyterlab
+- nodejs
+- jupyter_contrib_nbextensions
+- memory_profiler
+- line_profiler
+- pylint
+- rope
+- dask
+- distributed
+- dask-jobqueue
+- numba
+- pandas
+- tqdm
+- rich
+- bsread
+- jungfrau_utils
+- paulscherrerinstitute::bitshuffle>=0.3.5
+- hdf5=1.10.4
+- pip
+- pip:
+  - git+https://github.com/htlemke/escape-fel
+  - git+https://github.com/htlemke/calx
+
+
