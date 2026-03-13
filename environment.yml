@@ -33,6 +33,7 @@ dependencies:
 - hdf5=1.10.4
 - pip
 - xrayutilities
+- voila
 - pip:
   - diffcalc_core
   - git+https://github.com/htlemke/escape-fel
