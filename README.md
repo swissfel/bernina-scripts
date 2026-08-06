@@ -18,9 +18,21 @@ endstation (SwissFEL).
   - `beam_size_calculator.ipynb` — infers focus waist/Rayleigh range from a
     measured FWHM spot size and plots the beam envelope against named
     beamline components (`data/beamline.csv`).
+  - `diffractometer_3d.ipynb` — animated 3D model of the six-circle `you`
+    geometry (mu/eta/chi/phi/delta/gamma), cross-checked against diffcalc's
+    own reference diagram; paste a solved reflection's angles to see the
+    mechanism move, orbit/zoom with the mouse. A self-contained three.js
+    page (`diffractometer_3d.html`, offline-capable, no CDN) embedded via
+    iframe so it runs the same under Voila as standalone.
+  - `time_resolution.ipynb` — pump-probe absorbed fluence and the geometric
+    (footprint-driven) timing smear at grazing incidence, ported from
+    [`calx.pumpprobe`](https://github.com/htlemke/calx) (pure numpy/scipy,
+    reimplemented directly in `bernina_prep.timing` rather than depending
+    on the full `calx` package).
 - **`bernina_prep/`** — the shared, non-widget calculation code behind the
-  apps above (`diffraction.py`, `beamsize.py`). Installed in editable mode
-  via `environment.yml`, so it's importable from any notebook in the repo.
+  apps above (`diffraction.py`, `beamsize.py`, `timing.py`). Installed in
+  editable mode via `environment.yml`, so it's importable from any notebook
+  in the repo.
 - **`prep_notebooks/`** — richer, narrative walkthroughs meant for local use
   (they may depend on packages, data, or facility access not available on
   Binder).
