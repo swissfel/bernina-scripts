@@ -12,7 +12,7 @@ dependencies:
 - pandas
 - pip
 - xrayutilities
-- voila
+- voila<0.5.8
 - pip:
   - diffcalc_core
   - -e .
