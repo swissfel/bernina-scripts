@@ -6,7 +6,6 @@ dependencies:
 - scipy
 - matplotlib
 - ipython
-- jupyterlab
 - ipympl
 - ipywidgets>=8
 - pandas

@@ -43,13 +43,14 @@ endstation (SwissFEL).
 
 At PSI, use the `bpy312` pixi environment in `/mnt/app/python`
 (`pixi run -e bpy312 jupyter lab`), which has diffcalc-core, xrayutilities,
-ipywidgets and voila. Elsewhere, `environment.yml` at the repo root builds an
-equivalent conda/mamba environment:
+ipywidgets, voila and jupyterlab for editing. Elsewhere, `environment.yml` at
+the repo root builds the same minimal environment Binder uses (no
+JupyterLab — see the note on `voila`'s version below for why):
 
 ```
 mamba env create -f environment.yml
 conda activate bernina312_prep
-jupyter lab   # or: voila apps
+voila apps
 ```
 
 ## Running on Binder
@@ -59,3 +60,15 @@ serves as the start page — pick a tool and it runs live, no local install
 needed. `environment.yml` is kept deliberately minimal (just what `apps/`
 needs) so Binder builds stay fast; `prep_notebooks/` may need extra
 dependencies installed locally.
+
+`voila` is pinned to `<0.5.8`: 0.5.8 introduced a regression where it always
+tries to load MathJax from an external CDN on every page load (regardless of
+whether a notebook uses any LaTeX), and that fails on this hub's network,
+aborting the rest of Voila's widget-manager init — no later release (through
+0.5.12, current latest, checked) has fixed it. `jupyterlab` is deliberately
+*not* installed alongside it: its own federated extensions expect newer
+core-module versions than the pinned Voila's bundled/vendored core provides,
+which throws a wall of "Unsatisfied version ... shared singleton module"
+errors and breaks widget rendering entirely. Since Binder only needs Voila's
+own tree+app view here (not JupyterLab's UI), leaving `jupyterlab` out avoids
+that conflict rather than chasing a compatible version pin for both.
