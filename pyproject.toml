@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bernina-prep"
+version = "0.1.0"
+description = "Shared calculation code for the Bernina beamline prep apps and example notebooks"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["bernina_prep"]
