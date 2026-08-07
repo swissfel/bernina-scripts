@@ -11,3 +11,13 @@
 # gone from the final image.
 set -e
 mamba remove -y jupyterlab jupyter-resource-usage 2>/dev/null || true
+
+# There is also a separate, still-unresolved MathJax-related crash
+# ("Cannot read properties of undefined (reading 'Queue')" in voila's
+# bundled JS) that keeps ipywidgets stuck at "Loading widget..." even with
+# jupyterlab removed. A Voila.mathjax_url override (pointing at a no-op
+# stub) fixed this when passed as a CLI flag in local testing, but the
+# equivalent voila_config.py / VoilaConfiguration route did NOT take
+# effect -- confirmed via browser console, the crash still occurred with
+# the config file in place. Needs more investigation before shipping a fix
+# here; not included yet.

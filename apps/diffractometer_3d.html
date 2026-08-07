@@ -1426,11 +1426,16 @@ phi 0.000</textarea>
     phiGroup.add(ring(RING_PHI, COLORS.phi, "z"));
     phiGroup.add(directionArrow(RING_PHI, COLORS.phi, "z", ANGLE_SIGN.phi));
 
+    // Rectangular sample plate: thin along local Z, so its face normal is
+    // +Z at rest -- which is the on-screen "X" (SwissFEL transverse) axis,
+    // matching SF_X = diffcalc Z above. Same nesting as everything else in
+    // phiGroup, so the normal rotates correctly with mu/eta/chi/phi.
     const sampleMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 16, 16),
+      new THREE.BoxGeometry(0.9, 0.9, 0.08),
       new THREE.MeshStandardMaterial({ color: COLORS.sample, metalness: 0.1, roughness: 0.3 })
     );
     phiGroup.add(sampleMesh);
+    phiGroup.add(arrow(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1.6, 0xcc0066, 0.35, 0.16));
 
     // --- detector: gamma (outer) -> delta (inner) -- see file header note ---
     const gamGroup = new THREE.Group();
