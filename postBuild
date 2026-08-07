@@ -12,12 +12,44 @@
 set -e
 mamba remove -y jupyterlab jupyter-resource-usage 2>/dev/null || true
 
-# There is also a separate, still-unresolved MathJax-related crash
-# ("Cannot read properties of undefined (reading 'Queue')" in voila's
-# bundled JS) that keeps ipywidgets stuck at "Loading widget..." even with
-# jupyterlab removed. A Voila.mathjax_url override (pointing at a no-op
-# stub) fixed this when passed as a CLI flag in local testing, but the
-# equivalent voila_config.py / VoilaConfiguration route did NOT take
-# effect -- confirmed via browser console, the crash still occurred with
-# the config file in place. Needs more investigation before shipping a fix
-# here; not included yet.
+# Separately: ipywidgets' own output rendering unconditionally calls the
+# legacy MathJax v2 `Hub.Queue` API whenever `window.MathJax` is truthy,
+# regardless of which MathJax version actually loaded -- and voila's real
+# MathJax v2.7.7 CDN script (its hardcoded default) has a load/init race
+# that leaves `.Hub` undefined when typeset() fires too early, throwing
+# "Cannot read properties of undefined (reading 'Queue')" and aborting
+# Voila's page init entirely (this, not the jupyterlab conflict above, was
+# the actual remaining cause of "Loading widget..." never resolving).
+#
+# None of these apps use LaTeX, so point MathJax loading at a tiny inline
+# no-op stub instead: `window.MathJax.Hub.Queue` exists and does nothing.
+#
+# A `Voila.mathjax_url` trait override does this cleanly for the standalone
+# `voila` CLI, but Binder actually runs voila as a jupyter_server extension
+# (the `voila/tree/...` URL path within one running `jupyter server`, not a
+# direct `voila <notebook>` invocation) -- a materially different code path
+# that reads voila/utils.py's hardcoded default directly rather than any
+# Voila-app trait or config file (confirmed: a voila_config.py setting
+# Voila.mathjax_url did NOT take effect there, even though the equivalent
+# CLI flag works fine for the standalone app). So patch the default in
+# voila/utils.py itself, via Python so the install path doesn't need to be
+# hardcoded. Verified via the browser console in the actual server-
+# extension code path (a local `jupyter server` with voila's extension
+# enabled, navigated to `/voila/render/...`, matching what Binder does):
+# zero exceptions after this patch, vs. the crash above before it.
+python3 - << 'PYEOF'
+import voila.utils
+
+path = voila.utils.__file__
+content = open(path).read()
+old = "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js"
+stub = (
+    "data:text/javascript;base64,"
+    "d2luZG93Lk1hdGhKYXggPSB3aW5kb3cuTWF0aEpheCB8fCB7fTsKd2luZG93Lk1hdGhKYXguSHViID0gd2luZG93Lk1hdGhKYXguSHViIHx8IHsKICBRdWV1ZTogZnVuY3Rpb24gKCkgeyByZXR1cm4geyB0aGVuOiBmdW5jdGlvbiAoKSB7fSB9OyB9LAogIENvbmZpZzogZnVuY3Rpb24gKCkge30sCn07Cg=="
+)
+if old in content:
+    open(path, "w").write(content.replace(old, stub))
+    print(f"patched mathjax default in {path}")
+else:
+    print(f"WARNING: mathjax CDN string not found in {path}, voila version may have changed this")
+PYEOF
