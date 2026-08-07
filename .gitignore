@@ -102,3 +102,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# pixi (local dev env; pixi.toml/pixi.lock are tracked, the built env isn't)
+.pixi/

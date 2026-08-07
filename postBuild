@@ -1,0 +1,13 @@
+#!/bin/bash
+# repo2docker's CondaBuildPack starts every image from its own base
+# environment, which already includes jupyterlab (and its jupyter-resource-usage
+# extension) -- before environment.yml is even applied. `mamba env update`
+# only adds/updates packages, it never removes ones already present, so
+# simply omitting jupyterlab from environment.yml isn't enough: it's still
+# in the final image, and its federated extensions expect newer core
+# JupyterLab module versions than the pinned voila (see environment.yml)
+# bundles, breaking ipywidgets rendering under Voila entirely. Explicitly
+# remove it here, after the base+environment.yml install, so it's actually
+# gone from the final image.
+set -e
+mamba remove -y jupyterlab jupyter-resource-usage 2>/dev/null || true
