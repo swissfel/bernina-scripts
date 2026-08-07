@@ -64,15 +64,21 @@
 <div id="app">
   <div id="viewport"></div>
   <div id="panel">
-    <h1>Mock diffractometer &mdash; "You" geometry</h1>
+    <h1>Mock diffractometer &mdash; simple mockup (v2)</h1>
     <div class="subtitle">
-      Drag to orbit, scroll to zoom. Axes use the SwissFEL/Bernina convention:
-      <b style="color:#cc3333">X</b> horizontal transverse,
-      <b style="color:#2255cc">Y</b> vertical, <b style="color:#227722">Z</b> beam direction
-      (right-handed). The mechanism itself is computed directly on diffcalc's own axes
-      (Y=beam, Z=vertical there) &mdash; only these on-screen labels/arrows are remapped.
-      Rotation conventions otherwise match diffcalc's <code>you</code> geometry exactly
-      (H.&nbsp;You, J. Appl. Cryst. 1999, 32, 614&ndash;623).
+      Stripped back to basics: thin circles + rotation-direction arrows on a
+      bare kinematic chain, no mechanical styling yet &mdash; a starting
+      point to iterate on. Drag to orbit, scroll to zoom. Axes use the
+      SwissFEL/Bernina convention: <b style="color:#cc3333">X</b> horizontal
+      transverse, <b style="color:#2255cc">Y</b> vertical,
+      <b style="color:#227722">Z</b> beam direction (right-handed). The
+      mechanism itself is computed directly on diffcalc's own axes (Y=beam,
+      Z=vertical there) &mdash; only these on-screen labels/arrows are
+      remapped. Detector order is currently gamma (outer) &rarr; delta
+      (inner) per direct feedback; note this doesn't exactly match
+      diffcalc's own composition order (delta-then-gamma) unless axis
+      assignments are also adjusted &mdash; flagged for follow-up once the
+      mockup itself is settled.
     </div>
 
     <div class="section">
@@ -135,8 +141,8 @@
         </div>
       </div>
       <div class="hint">
-        Detector box is sized to escape-fel's <code>SixCircleBernina</code> default
-        (JF01T03V01: 76.8 &times; 120.9 mm). Default view frames up to 1 m.
+        Simple placeholder marker for now, not sized to a real detector.
+        Default view frames up to 1 m.
       </div>
     </div>
 
@@ -1224,48 +1230,43 @@ phi 0.000</textarea>
 
 </script>
 <script>
-// Mock 6-circle diffractometer, "You" geometry (H. You, J. Appl. Cryst. 1999, 32, 614-623),
-// matching diffcalc's rotation-matrix conventions (diffcalc/hkl/geometry.py) AND diffcalc's
-// own reference diagram (diffcalc docs, youmanual_images/4s_2d_diffractometer.png), which
-// uses the identical circle names (mu, eta, chi, phi, delta, nu) and axis labels (x, y, z).
+// Mock 6-circle diffractometer, "You" geometry -- SIMPLE MOCKUP, v2.
 //
-// Reading that diagram directly: mu's rotation axis is the vertical arrow labeled "x", and
-// the beam runs along "y". Cross-checked with diffcalc's source (rot_MU = x_rotation,
-// get_q_phi's beam vector = (0,1,0)):
+// Stripped back to basics on purpose: v1's mechanical styling (cradle forks,
+// struts, bearing hubs, octagonal drum, truss arm) didn't read well. This
+// version is just thin colored circles + rotation-direction arrows on a
+// bare kinematic chain, meant as a starting point to iterate on rather than
+// a finished mechanical model.
 //
-//   diffcalc X = vertical (up)
-//   diffcalc Y = beam direction
-//   diffcalc Z = transverse (horizontal, perpendicular to both)
+// Axis/rotation conventions still match diffcalc's own rotation matrices
+// (diffcalc/hkl/geometry.py) and reference diagram (see v1 for the full
+// derivation): diffcalc X=vertical, Y=beam, Z=transverse. SwissFEL labels
+// (X=transverse, Y=vertical, Z=beam) are a cyclic relabeling applied only to
+// the axis arrows/labels, not the mechanism itself.
 //
-// SwissFEL/Bernina's convention (Z=beam, Y=vertical, X=transverse) is then a clean CYCLIC
-// relabeling of diffcalc's own axes -- X_sf=Z_dc, Y_sf=X_dc, Z_sf=Y_dc -- which preserves
-// handedness with no sign flips needed (unlike a plain two-axis swap).
+// Sample tower, base -> sample: mu (X) -> eta (Z, negated) -> chi (Y) -> phi (Z, negated)
 //
-// Sample tower, mounted base -> sample (each stage nested inside the previous):
-//   mu    (mu)    rotate about lab X                  (rot_MU    = x_rotation(mu))
-//   eta   (eta)   rotate about (mu-tilted) Z, negated  (rot_ETA   = z_rotation(-eta))
-//   chi   (chi)   rotate about (..)-tilted Y           (rot_CHI   = y_rotation(chi))
-//   phi   (phi)   rotate about (..)-tilted Z, negated  (rot_PHI   = z_rotation(-phi))  <- sample here
-//
-// Detector arm, mounted base -> detector:
-//   delta (delta) rotate about lab Z, negated           (rot_DELTA = z_rotation(-delta))
-//   nu    (gamma) rotate about (delta-tilted) X         (rot_NU    = x_rotation(nu))    <- detector here
-//
-// Bernina convention renames nu -> gamma; the physics/axis is identical, only the label differs.
+// Detector: PROVISIONALLY swapped to gamma (outer) -> delta (inner) per
+// direct feedback on the mounting order. NOTE: this does not exactly match
+// diffcalc's own get_q_phi formula, which composes delta-then-gamma
+// (NU @ DELTA); swapping the mounting order changes the net rotation unless
+// the axis assignments are also adjusted to compensate, since rotations
+// about different axes don't commute. Flagging this to resolve once the
+// mockup itself is settled -- for now this reflects the requested physical
+// mounting order as-is.
 
 (function () {
   const deg = THREE.MathUtils.degToRad;
 
-  const VIEW_SPAN = 10; // scene units = 1000 mm at SCENE_MM_SCALE=0.01; default framing covers tdet up to 1 m
+  const VIEW_SPAN = 10; // scene units = 1000 mm at SCENE_MM_SCALE=0.01
+
   const RING_MU = 3.4;
   const RING_ETA = 2.9;
   const RING_CHI = 2.4;
   const RING_PHI = 1.9;
-  const RING_DELTA = 3.4;
-  const RING_NU = 2.9;
-  const TUBE = 0.06;
-  const PLATE_TUBE = 0.16; // chunkier cross-section for the disk-like eta/delta circles
-  const ARC = (Math.PI * 2 * 5) / 6; // 300 degrees: open "cradle" fork, not a closed ring
+  const RING_GAM = 3.4;
+  const RING_DELTA = 2.9;
+  const TUBE = 0.025; // thin
 
   const COLORS = {
     mu: 0xb35806,
@@ -1273,24 +1274,17 @@ phi 0.000</textarea>
     chi: 0x2c7a3d,
     phi: 0x60a862,
     delta: 0x2166ac,
-    nu: 0x67a9cf,
+    gamma: 0x67a9cf,
     beamIn: 0xff0033,
     beamOut: 0xff7f0e,
     sample: 0xfff2cc,
-    surface: 0x9ecae1,
-    strut: 0x8a8a8a,
-    hub: 0x555555,
     detector: 0x3a3a3a,
-    base: 0x8a8a8a,
   };
 
-  // Sign of each circle's contribution in setAngles (i.e. whether increasing the UI
-  // angle value corresponds to a positive or negated rotation about its axis) -- used
-  // so the "positive rotation direction" indicator arcs point the right way.
   const ANGLE_SIGN = { mu: 1, eta: -1, chi: 1, phi: -1, delta: -1, gamma: 1 };
 
-  function metalMat(color, opts) {
-    return new THREE.MeshStandardMaterial(Object.assign({ color, metalness: 0.7, roughness: 0.35 }, opts));
+  function mat(color) {
+    return new THREE.MeshStandardMaterial({ color, metalness: 0.3, roughness: 0.5 });
   }
 
   function makeTextSprite(text, color) {
@@ -1311,95 +1305,40 @@ phi 0.000</textarea>
     return sprite;
   }
 
-  // Open "cradle fork" -- a partial ring, like a real goniometer arc, rather than a
-  // closed hoop. `axis` is the rotation axis this stage turns about, so the fork lies
-  // in the plane perpendicular to it. `tube` controls cross-section thickness (a
-  // larger tube gives the chunkier, disk-like look used for eta/delta).
-  function fork(radius, color, axis, tube = TUBE) {
-    const geo = new THREE.TorusGeometry(radius, tube, 12, 64, ARC);
-    const mesh = new THREE.Mesh(geo, metalMat(color));
-    mesh.rotation.z = (Math.PI * 2 - ARC) / 2 + Math.PI / 2; // center the gap at the "bottom"
-    if (axis === "x") mesh.rotation.y = Math.PI / 2;
-    if (axis === "y") mesh.rotation.x = Math.PI / 2;
-    return mesh;
+  // Thin, full (closed) ring lying in the plane perpendicular to `axis`.
+  function ring(radius, color, axis) {
+    const geo = new THREE.TorusGeometry(radius, TUBE, 10, 96);
+    const meshObj = new THREE.Mesh(geo, mat(color));
+    if (axis === "x") meshObj.rotation.y = Math.PI / 2; // lies in Y-Z plane
+    if (axis === "y") meshObj.rotation.x = Math.PI / 2; // lies in X-Z plane
+    // axis === "z": default orientation already lies in X-Y plane
+    return meshObj;
   }
 
-  // Octagonal drum -- the mu turntable's base, matching the reference diagram's
-  // octagonal platform. `axis` is the drum's rotation axis (its flat faces are
-  // perpendicular to it).
-  function octagonalDrum(radius, height, color, axis) {
-    const geo = new THREE.CylinderGeometry(radius, radius, height, 8);
-    const mesh = new THREE.Mesh(geo, metalMat(color, { metalness: 0.5, roughness: 0.5 }));
-    if (axis === "x") mesh.rotation.z = Math.PI / 2;
-    if (axis === "z") mesh.rotation.x = Math.PI / 2;
-    return mesh;
-  }
-
-  // Small bearing-hub cylinder marking a pivot, oriented along its rotation axis.
-  function hub(radius, length, color, axis) {
-    const geo = new THREE.CylinderGeometry(radius, radius, length, 20);
-    const mesh = new THREE.Mesh(geo, metalMat(color, { metalness: 0.85, roughness: 0.25 }));
-    if (axis === "x") mesh.rotation.z = Math.PI / 2;
-    if (axis === "z") mesh.rotation.x = Math.PI / 2;
-    return mesh;
-  }
-
-  // Point at angle `a` (radians) around a ring of given radius lying in the plane
-  // perpendicular to `axis`, parametrized to match diffcalc's own x_rotation /
-  // y_rotation / z_rotation exactly: increasing `a` traces the SAME direction as
-  // applying that positive rotation matrix. (Needed so the direction-arrow sweep
-  // below is trustworthy, not just visually plausible.)
+  // Point at angle `a` around a ring perpendicular to `axis`, parametrized
+  // to match diffcalc's x_rotation/y_rotation/z_rotation exactly (increasing
+  // `a` traces the same direction as applying that positive rotation).
   function pointOnRing(radius, axis, a) {
     if (axis === "x") return new THREE.Vector3(0, radius * Math.cos(a), radius * Math.sin(a));
     if (axis === "y") return new THREE.Vector3(radius * Math.cos(a), 0, -radius * Math.sin(a));
     return new THREE.Vector3(radius * Math.cos(a), radius * Math.sin(a), 0);
   }
 
-  // Support strut (thin rod) between two points -- the "cradle arms" that visually
-  // carry one nested stage from the ring of the stage outside it.
-  function strut(from, to, color, radius = 0.045) {
-    const dir = new THREE.Vector3().subVectors(to, from);
-    const length = dir.length();
-    if (length < 1e-6) return new THREE.Group();
-    const geo = new THREE.CylinderGeometry(radius, radius, length, 8);
-    const mesh = new THREE.Mesh(geo, metalMat(color));
-    mesh.position.copy(from).addScaledVector(dir, 0.5);
-    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-    return mesh;
-  }
-
-  // Two cradle struts from a ring (at +-armAngle either side of its gap) inward to the
-  // origin, where the next nested stage pivots.
-  function cradleStruts(radius, axis, color) {
-    const group = new THREE.Group();
-    const armAngle = ARC / 2 - 0.35;
-    for (const a of [armAngle, -armAngle]) {
-      const p = pointOnRing(radius, axis, a);
-      group.add(strut(p, new THREE.Vector3(0, 0, 0), color));
-    }
-    return group;
-  }
-
-  // Curved "positive rotation direction" indicator: a short colored arc lying on the
-  // circle itself, starting at angle 0 and sweeping ~30 degrees in whichever
-  // direction actually corresponds to increasing that circle's angle value (per
-  // ANGLE_SIGN), with an arrowhead cone at the end.
+  // Curved "positive rotation direction" indicator: short colored arc on the
+  // ring itself, starting at angle 0, sweeping toward increasing angle value.
   function directionArrow(radius, color, axis, sign, sweepDeg = 30) {
     const group = new THREE.Group();
     const sweep = sign * deg(sweepDeg);
     const n = 16;
     const pts = [];
-    for (let i = 0; i <= n; i++) {
-      pts.push(pointOnRing(radius, axis, (sweep * i) / n));
-    }
+    for (let i = 0; i <= n; i++) pts.push(pointOnRing(radius, axis, (sweep * i) / n));
     const curve = new THREE.CatmullRomCurve3(pts);
-    const tubeGeo = new THREE.TubeGeometry(curve, 24, TUBE * 1.15, 8, false);
-    group.add(new THREE.Mesh(tubeGeo, metalMat(color, { metalness: 0.2, roughness: 0.4 })));
+    const tubeGeo = new THREE.TubeGeometry(curve, 24, TUBE * 1.4, 8, false);
+    group.add(new THREE.Mesh(tubeGeo, mat(color)));
 
     const tip = pts[pts.length - 1];
     const tangent = pts[pts.length - 1].clone().sub(pts[pts.length - 2]).normalize();
-    const coneGeo = new THREE.ConeGeometry(TUBE * 3.2, TUBE * 8, 12);
-    const cone = new THREE.Mesh(coneGeo, metalMat(color, { metalness: 0.2, roughness: 0.4 }));
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(TUBE * 3.5, TUBE * 9, 12), mat(color));
     cone.position.copy(tip);
     cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent);
     group.add(cone);
@@ -1421,14 +1360,8 @@ phi 0.000</textarea>
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf5f5f5);
 
-    const camera = new THREE.PerspectiveCamera(
-      45,
-      container.clientWidth / container.clientHeight,
-      0.1,
-      100
-    );
-    camera.up.set(1, 0, 0); // diffcalc's X (vertical, per the reference diagram) is screen-up
-    // Framed to comfortably show tdet out to VIEW_SPAN (1 m default) without re-zooming.
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.up.set(1, 0, 0); // diffcalc X (vertical) is screen-up
     camera.position.set(VIEW_SPAN * 1.0, VIEW_SPAN * 1.05, -VIEW_SPAN * 1.4);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -1442,21 +1375,15 @@ phi 0.000</textarea>
     controls.dampingFactor = 0.08;
     controls.update();
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const key = new THREE.DirectionalLight(0xffffff, 0.75);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const key = new THREE.DirectionalLight(0xffffff, 0.7);
     key.position.set(15, 10, -10);
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.3);
-    fill.position.set(-5, -10, 10);
-    scene.add(fill);
 
-    // --- SwissFEL-labeled lab axes ---
-    // Physically identical directions to diffcalc's own frame -- a cyclic relabeling,
-    // see file header. The mechanism below is computed directly on diffcalc's own
-    // (X,Y,Z); only these arrows/labels are remapped for display.
-    const SF_X = new THREE.Vector3(0, 0, 1); // SwissFEL X (transverse) = diffcalc Z
-    const SF_Y = new THREE.Vector3(1, 0, 0); // SwissFEL Y (vertical)   = diffcalc X
-    const SF_Z = new THREE.Vector3(0, 1, 0); // SwissFEL Z (beam)       = diffcalc Y
+    // --- SwissFEL-labeled lab axes (cyclic relabeling of diffcalc's own X,Y,Z) ---
+    const SF_X = new THREE.Vector3(0, 0, 1); // transverse = diffcalc Z
+    const SF_Y = new THREE.Vector3(1, 0, 0); // vertical   = diffcalc X
+    const SF_Z = new THREE.Vector3(0, 1, 0); // beam       = diffcalc Y
 
     const axesLen = 5;
     const origin = new THREE.Vector3(0, 0, 0);
@@ -1474,157 +1401,82 @@ phi 0.000</textarea>
     zLabel.position.x += 0.9;
     scene.add(zLabel);
 
-    // --- incident beam: arrow along +Z(SwissFEL) = +Y(diffcalc), pointing at the sample ---
-    const beamDist = VIEW_SPAN;
-    const beamStart = SF_Z.clone().multiplyScalar(-beamDist);
-    scene.add(arrow(SF_Z, beamStart, beamDist, COLORS.beamIn, 0.5, 0.22));
+    // --- incident beam ---
+    const beamStart = SF_Z.clone().multiplyScalar(-VIEW_SPAN);
+    scene.add(arrow(SF_Z, beamStart, VIEW_SPAN, COLORS.beamIn, 0.5, 0.22));
 
     // --- sample tower: mu -> eta -> chi -> phi (nested, base to sample) ---
-    // mu: octagonal turntable at the base, rotating about the vertical (X) axis,
-    // matching the reference diagram's drum-on-octagonal-plinth look.
-    const plinth = octagonalDrum(1.7, 0.5, COLORS.base, "x");
-    plinth.position.x = -1.0;
-    scene.add(plinth);
-
     const muGroup = new THREE.Group();
     scene.add(muGroup);
-    const muDrum = octagonalDrum(1.3, 0.55, COLORS.mu, "x");
-    muDrum.position.x = -0.55;
-    muGroup.add(muDrum);
-    muGroup.add(directionArrow(1.3, COLORS.mu, "x", ANGLE_SIGN.mu));
+    muGroup.add(ring(RING_MU, COLORS.mu, "x"));
+    muGroup.add(directionArrow(RING_MU, COLORS.mu, "x", ANGLE_SIGN.mu));
 
     const etaGroup = new THREE.Group();
     muGroup.add(etaGroup);
-    muGroup.add(cradleStruts(RING_MU, "x", COLORS.strut));
-    muGroup.add(fork(RING_MU, COLORS.mu, "x"));
-    etaGroup.add(fork(RING_ETA, COLORS.eta, "z", PLATE_TUBE));
+    etaGroup.add(ring(RING_ETA, COLORS.eta, "z"));
     etaGroup.add(directionArrow(RING_ETA, COLORS.eta, "z", ANGLE_SIGN.eta));
 
     const chiGroup = new THREE.Group();
     etaGroup.add(chiGroup);
-    etaGroup.add(cradleStruts(RING_ETA, "z", COLORS.strut));
-    chiGroup.add(fork(RING_CHI, COLORS.chi, "y"));
+    chiGroup.add(ring(RING_CHI, COLORS.chi, "y"));
     chiGroup.add(directionArrow(RING_CHI, COLORS.chi, "y", ANGLE_SIGN.chi));
 
     const phiGroup = new THREE.Group();
     chiGroup.add(phiGroup);
-    chiGroup.add(cradleStruts(RING_CHI, "y", COLORS.strut));
-    phiGroup.add(fork(RING_PHI, COLORS.phi, "z"));
+    phiGroup.add(ring(RING_PHI, COLORS.phi, "z"));
     phiGroup.add(directionArrow(RING_PHI, COLORS.phi, "z", ANGLE_SIGN.phi));
-    phiGroup.add(hub(0.12, 0.5, COLORS.hub, "z"));
 
-    // small distinct phi mounting block, separate from the sample itself
-    const phiBlock = new THREE.Mesh(
-      new THREE.BoxGeometry(0.4, 0.3, 0.4),
-      metalMat(COLORS.hub, { metalness: 0.6, roughness: 0.4 })
+    const sampleMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 16, 16),
+      new THREE.MeshStandardMaterial({ color: COLORS.sample, metalness: 0.1, roughness: 0.3 })
     );
-    phiGroup.add(phiBlock);
-
-    const sampleGeo = new THREE.OctahedronGeometry(0.3, 0);
-    const sampleMat = new THREE.MeshStandardMaterial({
-      color: COLORS.sample,
-      metalness: 0.1,
-      roughness: 0.3,
-      emissive: 0x554400,
-      emissiveIntensity: 0.15,
-    });
-    const sampleMesh = new THREE.Mesh(sampleGeo, sampleMat);
     phiGroup.add(sampleMesh);
 
-    // --- sample surface plane + normal, both fixed in the phi frame (rotate with phi) ---
-    const surfaceGroup = new THREE.Group();
-    phiGroup.add(surfaceGroup);
-    const surfacePlane = new THREE.Mesh(
-      new THREE.CircleGeometry(0.85, 32),
-      new THREE.MeshStandardMaterial({
-        color: COLORS.surface,
-        metalness: 0.1,
-        roughness: 0.5,
-        transparent: true,
-        opacity: 0.35,
-        side: THREE.DoubleSide,
-      })
-    );
-    surfaceGroup.add(surfacePlane);
-    let normalArrow = null;
+    // --- detector: gamma (outer) -> delta (inner) -- see file header note ---
+    const gamGroup = new THREE.Group();
+    scene.add(gamGroup);
+    gamGroup.add(ring(RING_GAM, COLORS.gamma, "x"));
+    gamGroup.add(directionArrow(RING_GAM, COLORS.gamma, "x", ANGLE_SIGN.gamma));
 
-    function setSurfaceNormal(nx, ny, nz) {
-      let v = new THREE.Vector3(nx, ny, nz);
-      if (v.lengthSq() < 1e-9) v.set(0, 0, 1);
-      v.normalize();
-      // CircleGeometry's face normal is local +Z; orient the plane so that becomes v.
-      surfacePlane.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), v);
-      if (normalArrow) surfaceGroup.remove(normalArrow);
-      normalArrow = arrow(v, new THREE.Vector3(0, 0, 0), 1.6, COLORS.surface, 0.35, 0.16);
-      surfaceGroup.add(normalArrow);
-    }
-    setSurfaceNormal(0, 0, 1);
-
-    // --- detector arm: delta -> nu (nested, base to detector) ---
     const deltaGroup = new THREE.Group();
-    scene.add(deltaGroup);
-    deltaGroup.add(fork(RING_DELTA, COLORS.delta, "z", PLATE_TUBE));
+    gamGroup.add(deltaGroup);
+    deltaGroup.add(ring(RING_DELTA, COLORS.delta, "z"));
     deltaGroup.add(directionArrow(RING_DELTA, COLORS.delta, "z", ANGLE_SIGN.delta));
 
-    const nuGroup = new THREE.Group();
-    deltaGroup.add(nuGroup);
-    deltaGroup.add(cradleStruts(RING_DELTA, "z", COLORS.strut));
-    nuGroup.add(fork(RING_NU, COLORS.nu, "x"));
-    nuGroup.add(directionArrow(RING_NU, COLORS.nu, "x", ANGLE_SIGN.gamma));
-    nuGroup.add(hub(0.12, 0.5, COLORS.hub, "x"));
-
-    // Detector arm + detector footprint: length follows tdet (sample-to-detector
-    // distance, mm), and the detector box is sized to a real area detector -- by
-    // default escape-fel's SixCircleBernina example (JF01T03V01: 1024 x 1612 px at
-    // 75 um/px = 76.8 x 120.9 mm). SCENE_MM_SCALE keeps the arm at a sane on-screen
-    // size (the sample tower above stays at its existing abstract scale; only the
-    // arm/detector are tied to real mm since that's what tdet means physically).
-    const SCENE_MM_SCALE = 0.01; // 1 scene unit = 100 mm
+    // simple detector arm: a thin line + small marker, length follows tdet
     const armAssembly = new THREE.Group();
-    nuGroup.add(armAssembly);
+    deltaGroup.add(armAssembly);
 
-    function rebuildArm(tdetMm, detWidthMm, detHeightMm) {
+    const SCENE_MM_SCALE = 0.01;
+    function rebuildArm(tdetMm) {
       while (armAssembly.children.length) armAssembly.remove(armAssembly.children[0]);
       const armLen = tdetMm * SCENE_MM_SCALE;
-      const railOffset = 0.16;
-      for (const sign of [1, -1]) {
-        const geo = new THREE.CylinderGeometry(0.045, 0.045, armLen, 12);
-        const mesh = new THREE.Mesh(geo, metalMat(COLORS.detector, { metalness: 0.55, roughness: 0.45 }));
-        mesh.position.set(sign * railOffset, armLen / 2, 0);
-        armAssembly.add(mesh);
-      }
-      // cross braces along the twin rails for a trussed, mechanical look
-      for (let t = 0.15; t < 1; t += 0.22) {
-        const brace = strut(
-          new THREE.Vector3(railOffset, t * armLen, 0),
-          new THREE.Vector3(-railOffset, t * armLen, 0),
-          COLORS.detector,
-          0.03
-        );
-        armAssembly.add(brace);
-      }
 
-      const detW = detWidthMm * SCENE_MM_SCALE;
-      const detH = detHeightMm * SCENE_MM_SCALE;
-      const detectorGeo = new THREE.BoxGeometry(detW, 0.12, detH);
-      const detectorMat = metalMat(COLORS.detector, { metalness: 0.4, roughness: 0.5 });
-      const detectorMesh = new THREE.Mesh(detectorGeo, detectorMat);
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, armLen, 0),
+      ]);
+      armAssembly.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: COLORS.detector })));
+
+      const detectorMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.7), mat(COLORS.detector));
       detectorMesh.position.y = armLen;
       armAssembly.add(detectorMesh);
 
-      // outgoing (scattered) beam arrow, follows delta+nu automatically as their child
       armAssembly.add(
-        arrow(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), armLen, COLORS.beamOut, Math.min(0.5, armLen * 0.08), Math.min(0.22, armLen * 0.035))
+        arrow(
+          new THREE.Vector3(0, 1, 0),
+          new THREE.Vector3(0, 0, 0),
+          armLen,
+          COLORS.beamOut,
+          Math.min(0.5, armLen * 0.08),
+          Math.min(0.22, armLen * 0.035)
+        )
       );
       return armLen;
     }
+    rebuildArm(500);
 
-    const DEFAULT_TDET = 500;
-    const DEFAULT_DET_W = 76.8;
-    const DEFAULT_DET_H = 120.9;
-    let currentArmLen = rebuildArm(DEFAULT_TDET, DEFAULT_DET_W, DEFAULT_DET_H);
-
-    // --- ground reference grid: horizontal = Y-Z(diffcalc) plane, since X(diffcalc) is up ---
+    // --- ground grid: horizontal = Y-Z(diffcalc) plane, since X(diffcalc) is up ---
     const grid = new THREE.GridHelper(16, 16, 0xcccccc, 0xe5e5e5);
     grid.rotation.z = -Math.PI / 2;
     grid.position.x = -3.5;
@@ -1635,10 +1487,14 @@ phi 0.000</textarea>
       etaGroup.rotation.z = -deg(eta);
       chiGroup.rotation.y = deg(chi);
       phiGroup.rotation.z = -deg(phi);
+      gamGroup.rotation.x = deg(gamma);
       deltaGroup.rotation.z = -deg(delta);
-      nuGroup.rotation.x = deg(gamma);
     }
     setAngles({});
+
+    function setDetectorDistance(tdetMm) {
+      rebuildArm(tdetMm);
+    }
 
     function resize() {
       const w = container.clientWidth;
@@ -1656,11 +1512,7 @@ phi 0.000</textarea>
     }
     animate();
 
-    function setDetectorDistance(tdetMm, widthMm = DEFAULT_DET_W, heightMm = DEFAULT_DET_H) {
-      currentArmLen = rebuildArm(tdetMm, widthMm, heightMm);
-    }
-
-    return { setAngles, setSurfaceNormal, setDetectorDistance, resize };
+    return { setAngles, setDetectorDistance, resize };
   };
 })();
 
