@@ -1,16 +1,41 @@
 #!/bin/bash
 # repo2docker's CondaBuildPack starts every image from its own base
-# environment, which already includes jupyterlab (and its jupyter-resource-usage
-# extension) -- before environment.yml is even applied. `mamba env update`
-# only adds/updates packages, it never removes ones already present, so
-# simply omitting jupyterlab from environment.yml isn't enough: it's still
-# in the final image, and its federated extensions expect newer core
-# JupyterLab module versions than the pinned voila (see environment.yml)
-# bundles, breaking ipywidgets rendering under Voila entirely. Explicitly
-# remove it here, after the base+environment.yml install, so it's actually
-# gone from the final image.
+# environment, which already includes jupyterlab, notebook (a separate
+# conda package -- it independently ships the @jupyter-notebook federated
+# extension) and jupyter-resource-usage -- before environment.yml is even
+# applied. `mamba env update` only adds/updates packages, it never removes
+# ones already present, so simply omitting jupyterlab from environment.yml
+# isn't enough: it's still in the final image, and its (and notebook's)
+# federated extensions expect newer core JupyterLab module versions than
+# the pinned voila (see environment.yml) bundles, breaking ipywidgets
+# rendering under Voila with Module Federation "shared module ... doesn't
+# exist" errors. Explicitly remove all three here, after the base+
+# environment.yml install, so they're actually gone from the final image.
+#
+# The previous version of this line assumed `mamba` unconditionally and
+# swallowed its own failure with `2>/dev/null || true` -- which is exactly
+# why this removal silently never ran on at least one build (this dev
+# machine, used to test the script, only has `micromamba` installed; `mamba`
+# doesn't exist here at all). Detect whichever tool is actually present
+# instead of assuming, and let a real failure stop the build (no `|| true`)
+# so a broken removal is loud in the build log, not a silent no-op again.
+#
+# Removing these packages also pulls out ipykernel as a transitive
+# dependency (confirmed via a real removal test), which would leave Voila
+# with no kernel to execute notebook cells -- so reinstall it explicitly
+# afterward.
 set -e
-mamba remove -y jupyterlab jupyter-resource-usage 2>/dev/null || true
+if command -v mamba >/dev/null 2>&1; then
+    CONDA_TOOL=mamba
+elif command -v micromamba >/dev/null 2>&1; then
+    CONDA_TOOL=micromamba
+else
+    echo "ERROR: neither mamba nor micromamba found on PATH" >&2
+    exit 1
+fi
+echo "postBuild: using $CONDA_TOOL to remove jupyterlab/notebook/jupyter-resource-usage"
+$CONDA_TOOL remove -y jupyterlab notebook jupyter-resource-usage
+$CONDA_TOOL install -y -c conda-forge ipykernel
 
 # Separately: ipywidgets' own output rendering unconditionally calls the
 # legacy MathJax v2 `Hub.Queue` API whenever `window.MathJax` is truthy,
