@@ -32,7 +32,6 @@ dependencies:
   - scipy
   - matplotlib-base
   - pandas
-  - xrayutilities
   - voila
   - pip
   - pip:

@@ -1,0 +1,30 @@
+#!/bin/bash
+# repo2docker runs this after the environment is built.
+#
+# Voila hides execution errors by default (VoilaConfiguration.show_tracebacks is
+# False), so a notebook that raises on Binder renders as a page with no widgets
+# and no message at all - which looks identical to a broken widget frontend.
+# Turn tracebacks on so any failure shows up in the rendered app, and give the
+# kernel more room to start on a cold, memory-limited Binder container
+# (VoilaExecutor.startup_timeout defaults to 60s).
+set -euo pipefail
+
+mkdir -p "${HOME}/.jupyter"
+
+read -r -d '' VOILA_CFG <<'JSON' || true
+{
+  "VoilaConfiguration": {
+    "show_tracebacks": true
+  },
+  "VoilaExecutor": {
+    "startup_timeout": 180
+  }
+}
+JSON
+
+# standalone voila (`voila notebook.ipynb`)
+printf '%s\n' "$VOILA_CFG" > "${HOME}/.jupyter/voila.json"
+
+# voila running as a jupyter-server extension, which is what Binder's
+# ?urlpath=voila/render/... goes through
+printf '%s\n' "$VOILA_CFG" > "${HOME}/.jupyter/jupyter_server_config.json"
