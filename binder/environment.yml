@@ -1,0 +1,42 @@
+# Environment for mybinder.org ONLY.
+#
+# repo2docker prefers config files in binder/ over the ones in the repo root, so
+# ../environment.yml (the full beamline/dev environment, with PSI channels,
+# jungfrau_utils, bsread, the hdf5 pin, ...) is deliberately NOT used here.
+#
+# Two things matter for the ipywidgets applets to render:
+#
+# 1. repo2docker installs this file into the SAME conda env that runs Binder's
+#    Jupyter server (true for any python >= 3.7). Anything listed here that makes
+#    conda downgrade notebook / jupyterlab / ipywidgets silently breaks the widget
+#    frontend, and widget output then shows up as an empty area. In particular do
+#    NOT add jupyter_contrib_nbextensions: it requires notebook <7 and drags the
+#    whole Binder stack backwards.
+# 2. Binder's frontend ships jupyterlab_widgets 3.x / widgetsnbextension 4.x, which
+#    only speak the ipywidgets 8 model protocol. Keep the pin below, otherwise a
+#    solve is free to land on ipywidgets 7 and nothing renders. (widgets.TagsInput
+#    in the diffraction applet also needs ipywidgets >= 8.)
+#
+# Do not list jupyter / jupyterlab / notebook / nodejs here - Binder provides them.
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12
+  # widget stack - must stay compatible with Binder's frontend
+  - ipywidgets>=8.1,<9
+  - ipympl>=0.9.4
+  # applet dependencies
+  - numpy
+  - scipy
+  - matplotlib-base
+  - pandas
+  - xrayutilities
+  - voila
+  - pip
+  - pip:
+    # diffraction calculator (applet_sim_diff_bernina.ipynb)
+    - diffcalc-core
+    # pump-probe time resolution (time_resolution.ipynb)
+    - git+https://github.com/htlemke/calx
