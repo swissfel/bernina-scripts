@@ -193,6 +193,13 @@ What is and is not trustworthy:
   along SwissFEL y. In the scene's local frame that is local Z and local X
   respectively (local Y is the arm), so the box is
   `BoxGeometry(height, thickness, width)` - easy to get backwards.
+- **Beamline presets** live in `apps/bernina_parameters/*.json` and are offered
+  in a dropdown whose labels are derived from the filenames
+  (`Bernina_THC_diffraction_config.json` -> "Bernina THC"). They apply only the
+  `angles`, `fixed` and `filters` groups, deliberately leaving the sample and
+  hkl alone. Applying a whole config writes many widgets, each of which would
+  fire its own solve - suspend solving during the batch and run exactly one
+  afterwards (`_suspend` in the app).
 - `FileUpload` and `data:` URI download links both work under voila, so config
   save/restore needs no server round trip.
 - Flexbox in the embedded page: use `width:100%` not `100vw` (inside an iframe

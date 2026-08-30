@@ -1504,12 +1504,30 @@
     // +Z at rest -- which is the on-screen "X" (SwissFEL transverse) axis,
     // matching SF_X = diffcalc Z above. Same nesting as everything else in
     // phiGroup, so the normal rotates correctly with mu/eta/chi/phi.
+    // The sample SURFACE sits at the origin (which is also the reciprocal-space
+    // origin), so the platelet body hangs behind it, on the opposite side from
+    // the surface normal. The group's +Z is that normal: it is aimed along
+    // n_phi (= UB * n_hkl, normalised) as soon as the notebook supplies one, so
+    // the plate shows the surface orientation that was actually entered rather
+    // than a fixed axis.
+    const SAMPLE_T = 0.08;
+    const sampleGroup = new THREE.Group();
+    phiGroup.add(sampleGroup);
     const sampleMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.9, 0.9, 0.08),
+      new THREE.BoxGeometry(0.9, 0.9, SAMPLE_T),
       new THREE.MeshStandardMaterial({ color: COLORS.sample, metalness: 0.1, roughness: 0.3 })
     );
-    phiGroup.add(sampleMesh);
-    phiGroup.add(arrow(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1.6, 0xcc0066, 0.35, 0.16));
+    sampleMesh.position.z = -SAMPLE_T / 2;   // body behind the surface plane
+    sampleGroup.add(sampleMesh);
+    sampleGroup.add(arrow(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0),
+                          1.6, 0xcc0066, 0.35, 0.16));
+
+    function setSurfaceNormal(nPhi) {
+      if (!nPhi || nPhi.length !== 3) return;
+      const n = new THREE.Vector3(nPhi[0], nPhi[1], nPhi[2]);
+      if (n.lengthSq() < 1e-12) return;
+      sampleGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n.normalize());
+    }
 
     // --- detector: gamma (outer) -> delta (inner) -- see file header note ---
     const gamGroup = new THREE.Group();
@@ -1898,6 +1916,9 @@
         cellObjects: cellGroup.children.length,
         circlesVisible: Object.keys(circles).filter((n) => circles[n].ringMesh.visible).length,
         measuredHkl: lastMeasuredHkl,
+        surfaceNormalPhi: sampleGroup.localToWorld(new THREE.Vector3(0, 0, 1))
+          .sub(sampleGroup.localToWorld(new THREE.Vector3(0, 0, 0))).toArray(),
+        samplePlateOffsetZ: sampleMesh.position.z,
         detBodyScene: lastDetectorMesh
           ? { width_along_SF_x: lastDetectorMesh.geometry.parameters.depth,
               height_along_SF_y: lastDetectorMesh.geometry.parameters.width } : null,
@@ -1905,7 +1926,8 @@
       };
     }
 
-    return { setAngles, setDetectorDistance, setShowCircles, setRecip, resize, debugCounts };
+    return { setAngles, setDetectorDistance, setShowCircles, setRecip,
+             setSurfaceNormal, resize, debugCounts };
   };
 })();
 
@@ -2066,6 +2088,7 @@
       const opts = {};
       if (typeof msg.kMag === "number") opts.kMag = msg.kMag;
       if (msg.ub) opts.ub = msg.ub;
+      if (msg.nPhi) app.setSurfaceNormal(msg.nPhi);
       if (Object.keys(opts).length) app.setRecip(opts);
 
       statusEl.textContent = msg.label ? "showing " + msg.label : "";

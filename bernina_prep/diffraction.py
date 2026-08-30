@@ -297,3 +297,17 @@ def reciprocal_basis(ubcalc: UBCalculation) -> list[list[float]]:
     sample and let mu/eta/chi/phi carry them into the lab frame.
     """
     return np.asarray(ubcalc.UB, dtype=float).tolist()
+
+
+def surface_normal_phi(ubcalc: UBCalculation) -> list[float]:
+    """The sample surface normal as a unit vector in the phi (sample) frame.
+
+    diffcalc derives this from the entered ``n_hkl`` via UB (the normal of the
+    (hkl) planes is along the reciprocal-lattice vector), so it already carries
+    both the surface index and the crystal orientation. Returned in the phi
+    frame, which is the frame the sample circles rotate, so a viewer can attach
+    it to the sample and let mu/eta/chi/phi take it into the lab.
+    """
+    n = np.asarray(ubcalc.n_phi, dtype=float).ravel()
+    norm = np.linalg.norm(n)
+    return (n / norm).tolist() if norm > 0 else [0.0, 0.0, 1.0]
