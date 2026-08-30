@@ -42,14 +42,53 @@ def parse_vector(text: str) -> tuple:
     return tuple(value)
 
 
-def parse_orientations(specs: list[str]) -> list[tuple[tuple, tuple]]:
-    """Parse ['(1,1,1) > (0,0,1)', ...] into [(hkl, xyz), ...]."""
+# --- lab frame conventions ---------------------------------------------------
+#
+# diffcalc and the beamline label the same right-handed lab frame differently:
+#
+#     diffcalc  +x  +y  +z
+#     SwissFEL  +y  +z  +x
+#
+# i.e. diffcalc x is SwissFEL y (vertical), diffcalc y is SwissFEL z (beam) and
+# diffcalc z is SwissFEL x (horizontal transverse). It is a cyclic relabelling,
+# so it is a pure rotation (determinant +1) - no handedness change.
+#
+# Anything a user types or reads should be SwissFEL; diffcalc only ever sees
+# its own axes. This applies to LAB-FRAME directions only: hkl values are
+# reciprocal-lattice indices and carry no lab frame at all, so they are never
+# converted.
+
+def swissfel_to_diffcalc(v) -> tuple:
+    """(x, y, z) in SwissFEL lab axes -> the same direction in diffcalc's."""
+    x, y, z = v
+    return (y, z, x)
+
+
+def diffcalc_to_swissfel(v) -> tuple:
+    """(x, y, z) in diffcalc lab axes -> the same direction in SwissFEL's."""
+    x, y, z = v
+    return (z, x, y)
+
+
+def parse_orientations(specs: list[str], frame: str = "diffcalc") -> list[tuple[tuple, tuple]]:
+    """Parse ['(1,1,1) > (0,0,1)', ...] into [(hkl, xyz), ...].
+
+    ``frame`` says which lab axes the xyz half is written in. With
+    ``"swissfel"`` the direction is converted to diffcalc's axes on the way in;
+    the hkl half is never touched. Default stays ``"diffcalc"`` so existing
+    callers keep their exact meaning - pass the frame explicitly.
+    """
+    if frame not in ("diffcalc", "swissfel"):
+        raise ValueError(f"unknown frame {frame!r}; use 'diffcalc' or 'swissfel'")
     parsed = []
     for spec in specs:
         if ">" not in spec:
             continue
         hkl_s, xyz_s = spec.split(">", 1)
-        parsed.append((parse_vector(hkl_s), parse_vector(xyz_s)))
+        xyz = parse_vector(xyz_s)
+        if frame == "swissfel":
+            xyz = swissfel_to_diffcalc(xyz)
+        parsed.append((parse_vector(hkl_s), xyz))
     return parsed
 
 
@@ -59,14 +98,20 @@ def build_ubcalc(
     uc_alpha: float, uc_beta: float, uc_gamma: float,
     orientations: list[str],
     surface_normal: str,
+    frame: str = "diffcalc",
 ) -> UBCalculation:
-    """Build and solve a diffcalc UBCalculation in the 'you' geometry."""
+    """Build and solve a diffcalc UBCalculation in the 'you' geometry.
+
+    ``frame`` is the lab frame the orientation xyz directions are written in
+    ("swissfel" or "diffcalc"). ``surface_normal`` is an (h,k,l), i.e. a
+    reciprocal-lattice direction, so it is frame-independent.
+    """
     ubcalc = UBCalculation("you")
     ubcalc.set_lattice(
         lat_name, a=uc_a, b=uc_b, c=uc_c,
         alpha=uc_alpha, beta=uc_beta, gamma=uc_gamma,
     )
-    for hkl, xyz in parse_orientations(orientations):
+    for hkl, xyz in parse_orientations(orientations, frame=frame):
         ubcalc.add_orientation(hkl, xyz, None, None)
     ubcalc.n_hkl = parse_vector(surface_normal)
     ubcalc.calc_ub()

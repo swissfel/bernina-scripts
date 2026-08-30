@@ -90,6 +90,34 @@ a row of `Button`s acting as column headers.
 
 - The beamline calls the out-of-plane detector circle **gamma**; diffcalc calls
   it `nu`. The library translates at its boundary — callers only see `gam`/`gamma`.
+- **Lab axes: the apps speak SwissFEL, diffcalc speaks its own.** Same
+  right-handed frame, cyclically relabelled:
+
+  | | x | y | z |
+  |---|---|---|---|
+  | diffcalc | +x | +y | +z |
+  | SwissFEL | +y | +z | +x |
+
+  So diffcalc x is SwissFEL y (vertical), diffcalc y is SwissFEL z (beam), and
+  diffcalc z is SwissFEL x (horizontal transverse). `swissfel_to_diffcalc()` /
+  `diffcalc_to_swissfel()` in `bernina_prep.diffraction` do the mapping; it is a
+  pure rotation (determinant +1), so nothing about handedness changes.
+
+  Convert **lab-frame directions only**. An `(h,k,l)` is a reciprocal-lattice
+  index and carries no lab frame, so it is never converted — which is why the
+  surface normal, entered as `(h,k,l)`, is frame-independent while the xyz half
+  of an orientation line is not.
+
+  `build_ubcalc(..., frame=...)` takes `"swissfel"` or `"diffcalc"`. The default
+  is **`"diffcalc"`** so old callers keep their exact meaning; `apps/dev`
+  passes `frame="swissfel"` and the stable `apps/diffraction_reflections.ipynb`
+  still uses diffcalc axes. Whenever an app is converted, translate its default
+  orientations too rather than leaving the numbers and silently changing what
+  they mean — the check is that UB comes out identical.
+
+  The 3D scene is built on diffcalc axes with only the on-screen axis arrows
+  and labels relabelled to SwissFEL, which is why it already looked right
+  before the inputs were converted.
 - **diffcalc-core's `UB` uses the 2π convention**: `|a*| = 2π/a` and
   `|UB @ (h,k,l)| = 2π/d`. Anything drawn alongside it (k, k′, Q) must use
   `|k| = 2π/λ` or Q will not land on a reciprocal lattice node. `k_magnitude()`
