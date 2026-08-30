@@ -1560,7 +1560,7 @@
     // the reciprocal lattice node of the drawn cell. Supplied by the notebook.
     const recipState = { show: false, showCell: false, showHklCell: false,
                          showEwald: false, showDetPatch: false,
-                         cmPerInvAng: 5, kMag: null, ub: null, hkl: null,
+                         cmPerInvAng: 5, kMag: null, ub: null,
                          detW: 77, detH: 77 };
 
     // Keeps the Ewald sphere inside the view box: it can be far larger than
@@ -1583,6 +1583,42 @@
       }
     }
 
+    // Invert a 3x3 given as rows; used to turn a measured Q back into hkl.
+    function invert3(m) {
+      const [a, b, c] = m[0], [d, e, f] = m[1], [g, h, i] = m[2];
+      const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+      if (!isFinite(det) || Math.abs(det) < 1e-18) return null;
+      const s = 1 / det;
+      return [
+        [(e * i - f * h) * s, (c * h - b * i) * s, (b * f - c * e) * s],
+        [(f * g - d * i) * s, (a * i - c * g) * s, (c * d - a * f) * s],
+        [(d * h - e * g) * s, (b * g - a * h) * s, (a * e - b * d) * s],
+      ];
+    }
+
+    function mul3(m, v) {
+      return new THREE.Vector3(
+        m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z,
+        m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z,
+        m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z
+      );
+    }
+
+    // hkl actually being measured, from the current circle positions:
+    // undo the sample rotation to get q in the phi frame, then apply UB^-1.
+    // Live, so dragging any angle updates the label and the cell around Q.
+    function measuredHkl(qSceneVec, sceneUnitsPerInvAng) {
+      if (!recipState.ub || sceneUnitsPerInvAng <= 0) return null;
+      const ubInv = invert3(recipState.ub);
+      if (!ubInv) return null;
+      phiGroup.updateMatrixWorld(true);
+      const qPhi = qSceneVec.clone()
+        .divideScalar(sceneUnitsPerInvAng)
+        .applyQuaternion(phiGroup.getWorldQuaternion(new THREE.Quaternion()).invert());
+      const hkl = mul3(ubInv, qPhi);
+      return [hkl.x, hkl.y, hkl.z];
+    }
+
     function labelAt(text, pos, color, offset) {
       const sprite = makeTextSprite(text, color);
       sprite.position.copy(pos);
@@ -1598,26 +1634,38 @@
     // scene units per inverse angstrom: cm -> mm -> scene
     function recScale() { return recipState.cmPerInvAng * 10 * SCENE_MM_SCALE; }
 
+    let lastMeasuredHkl = null;
+
     function updateRecip() {
       clearGroup(recipGroup);
       clearGroup(cellGroup);
+      lastMeasuredHkl = null;
       const s = recScale();
 
-      if (recipState.show && recipState.kMag) {
-        const len = recipState.kMag * s;               // |k| drawn length
-        const beam = new THREE.Vector3(0, 1, 0);       // diffcalc Y = beam
+      // Geometry of the current setting, computed whether or not the vectors
+      // are shown - the hkl cell option needs it too.
+      let len = 0, beam = null, outDir = null, kStart = null, Q = null, qLen = 0;
+      let measured = null;
+      if (recipState.kMag) {
+        len = recipState.kMag * s;                     // |k| drawn length
+        beam = new THREE.Vector3(0, 1, 0);             // diffcalc Y = beam
         deltaGroup.updateMatrixWorld(true);
-        const outDir = new THREE.Vector3(0, 1, 0)
+        outDir = new THREE.Vector3(0, 1, 0)
           .applyQuaternion(deltaGroup.getWorldQuaternion(new THREE.Quaternion()))
           .normalize();
+        kStart = beam.clone().multiplyScalar(-len);    // k ends at sample
+        Q = outDir.clone().multiplyScalar(len).sub(beam.clone().multiplyScalar(len));
+        qLen = Q.length();
+        measured = qLen > 1e-9 ? measuredHkl(Q, s) : null;
+        lastMeasuredHkl = measured;
+      }
+
+      if (recipState.show && recipState.kMag) {
         const origin = new THREE.Vector3(0, 0, 0);
-        const kStart = beam.clone().multiplyScalar(-len);   // k ends at sample
 
         recipGroup.add(arrow(beam, kStart, len, 0xff0033, len * 0.09, len * 0.035));
         recipGroup.add(arrow(outDir, origin, len, 0xff7f0e, len * 0.09, len * 0.035));
 
-        const Q = outDir.clone().multiplyScalar(len).sub(beam.clone().multiplyScalar(len));
-        const qLen = Q.length();
         if (qLen > 1e-6) {
           recipGroup.add(arrow(Q.clone().normalize(), origin, qLen, 0x8800cc,
                                qLen * 0.12, qLen * 0.05));
@@ -1634,9 +1682,8 @@
         recipGroup.add(labelAt("k'", kPrimeEnd.clone().multiplyScalar(0.62), "#e06a00", off));
         if (qLen > 1e-6) {
           let qText = "Q";
-          if (recipState.showHklCell && recipState.hkl) {
-            const [h, k, l] = recipState.hkl;
-            qText = "Q (" + [h, k, l].map((v) => (Math.round(v * 100) / 100)).join(",") + ")";
+          if (recipState.showHklCell && measured) {
+            qText = "Q (" + measured.map((v) => (Math.round(v * 100) / 100)).join(", ") + ")";
           }
           recipGroup.add(labelAt(qText, Q.clone().multiplyScalar(0.6), "#8800cc", off));
         }
@@ -1644,15 +1691,31 @@
         // --- Ewald sphere: centred on the tail of k, radius |k|, so it passes
         //     through the sample (reciprocal origin) and through the tip of Q.
         if (recipState.showEwald) {
-          const sphere = new THREE.Mesh(
+          // Rendering only the BACK side gives the shell a readable curvature
+          // (you see the far wall through the near one) instead of the flat
+          // wash a double-sided basic material produced; a lit material adds
+          // the shading that made it read as a surface at all, and a faint
+          // lat/long wireframe carries the shape where the shading is weak.
+          const shell = new THREE.Mesh(
             new THREE.SphereGeometry(len, 64, 40),
-            new THREE.MeshBasicMaterial({
-              color: 0x3388dd, transparent: true, opacity: 0.13,
-              side: THREE.DoubleSide, depthWrite: false, clippingPlanes: clipPlanes,
+            new THREE.MeshStandardMaterial({
+              color: 0x4c9be8, transparent: true, opacity: 0.16,
+              side: THREE.BackSide, depthWrite: false,
+              metalness: 0.0, roughness: 0.35, clippingPlanes: clipPlanes,
             })
           );
-          sphere.position.copy(kStart);
-          recipGroup.add(sphere);
+          shell.position.copy(kStart);
+          recipGroup.add(shell);
+
+          const grid = new THREE.LineSegments(
+            new THREE.WireframeGeometry(new THREE.SphereGeometry(len, 24, 14)),
+            new THREE.LineBasicMaterial({
+              color: 0x4c9be8, transparent: true, opacity: 0.22,
+              depthWrite: false, clippingPlanes: clipPlanes,
+            })
+          );
+          grid.position.copy(kStart);
+          recipGroup.add(grid);
         }
 
         // --- the patch of that sphere the detector actually sees ---
@@ -1691,7 +1754,7 @@
         }
       }
 
-      if ((recipState.showCell || (recipState.showHklCell && recipState.hkl)) && recipState.ub) {
+      if ((recipState.showCell || (recipState.showHklCell && lastMeasuredHkl)) && recipState.ub) {
         const U = recipState.ub;   // columns are a*, b*, c* in the phi frame
         const col = (j) => new THREE.Vector3(U[0][j], U[1][j], U[2][j]).multiplyScalar(s);
         const A = col(0), B = col(1), C = col(2);
@@ -1720,14 +1783,19 @@
 
         // Optionally also outline the cell the requested reflection sits in:
         // hkl (0.1, 2.99, 3) -> the cell spanning h 0-1, k 2-3, l 3-4.
-        if (recipState.showHklCell && recipState.hkl) {
-          const n = recipState.hkl.map(Math.floor);
+        if (recipState.showHklCell && lastMeasuredHkl) {
+          const n = lastMeasuredHkl.map(Math.floor);
           const base = new THREE.Vector3()
             .addScaledVector(A, n[0]).addScaledVector(B, n[1]).addScaledVector(C, n[2]);
           const Pn = (x, y, z) => base.clone()
             .addScaledVector(A, x).addScaledVector(B, y).addScaledVector(C, z);
+          // the three edges leaving the corner keep the a*/b*/c* colours; the
+          // rest of the body is drawn in a distinct colour so this cell is
+          // still clearly the one around Q rather than the one at the origin
+          cellGroup.add(thinLine(Pn(0,0,0), Pn(1,0,0), 0xcc0000));   // a*
+          cellGroup.add(thinLine(Pn(0,0,0), Pn(0,1,0), 0x00aa00));   // b*
+          cellGroup.add(thinLine(Pn(0,0,0), Pn(0,0,1), 0x2255cc));   // c*
           const cellEdges = [
-            [Pn(0,0,0),Pn(1,0,0)], [Pn(0,0,0),Pn(0,1,0)], [Pn(0,0,0),Pn(0,0,1)],
             [Pn(1,0,0),Pn(1,1,0)], [Pn(0,1,0),Pn(1,1,0)],
             [Pn(1,0,0),Pn(1,0,1)], [Pn(0,0,1),Pn(1,0,1)],
             [Pn(0,1,0),Pn(0,1,1)], [Pn(0,0,1),Pn(0,1,1)],
@@ -1791,6 +1859,7 @@
         recipObjects: recipGroup.children.length,
         cellObjects: cellGroup.children.length,
         circlesVisible: Object.keys(circles).filter((n) => circles[n].ringMesh.visible).length,
+        measuredHkl: lastMeasuredHkl,
         arcSweeps: Object.keys(circles).reduce((o, n) => (o[n] = circles[n].angle, o), {}),
       };
     }
@@ -1956,7 +2025,6 @@
       const opts = {};
       if (typeof msg.kMag === "number") opts.kMag = msg.kMag;
       if (msg.ub) opts.ub = msg.ub;
-      if (msg.hkl) opts.hkl = msg.hkl;
       if (Object.keys(opts).length) app.setRecip(opts);
 
       statusEl.textContent = msg.label ? "showing " + msg.label : "";

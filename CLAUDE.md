@@ -141,3 +141,22 @@ What is and is not trustworthy:
 - Heavy background processes (headless Chrome + voila) can make an
   `nbconvert --execute` run appear to hang. Stop them before concluding a
   notebook is broken.
+
+### Notes from the 3D view work
+
+- **Measured hkl** is `UB⁻¹ · R_sample⁻¹ · Q_lab`, computed in the browser from
+  the live circle positions, so it updates while dragging. Sanity check: at a
+  solved reflection it returns exactly the requested indices; off the Bragg
+  condition it goes non-integer. Rotating a circle whose axis is parallel to
+  the reflection (e.g. phi when UB·(111) lies along z) correctly leaves it
+  unchanged — that is not a bug.
+- **Translucent shells** (the Ewald sphere) read as a flat wash with a
+  double-sided `MeshBasicMaterial`. Rendering only `THREE.BackSide` with a lit
+  material, plus a faint `WireframeGeometry` sphere, is what made it read as a
+  balloon. Clip it with `renderer.localClippingEnabled` + six `THREE.Plane`s so
+  a sphere far larger than the scene does not take over.
+- `FileUpload` and `data:` URI download links both work under voila, so config
+  save/restore needs no server round trip.
+- Flexbox in the embedded page: use `width:100%` not `100vw` (inside an iframe
+  `100vw` includes the scrollbar), and a column flex item needs `min-height:0`
+  or it refuses to shrink below its content and pushes siblings off-screen.
