@@ -1,0 +1,78 @@
+{
+  "angles": {
+    "gam": 0.0,
+    "delta": 0.0,
+    "mu": 0.0,
+    "eta": -90.0,
+    "chi": 0.0,
+    "phi": 0.0,
+    "qaz": 0.0,
+    "naz": 0.0,
+    "alpha": 0.0,
+    "beta": 0.0,
+    "psi": 0.0,
+    "a_eq_b": false,
+    "mu_is_gam": false
+  },
+  "fixed": {
+    "gam": false,
+    "delta": false,
+    "mu": true,
+    "eta": true,
+    "chi": true,
+    "phi": false,
+    "qaz": false,
+    "naz": false,
+    "alpha": false,
+    "beta": false,
+    "psi": false,
+    "a_eq_b": false,
+    "mu_is_gam": false
+  },
+  "filters": {
+    "gam": [
+      "-150",
+      "10"
+    ],
+    "delta": [
+      "-10",
+      "120"
+    ],
+    "mu": [
+      "-120",
+      "30"
+    ],
+    "eta": [
+      "-100",
+      "100"
+    ],
+    "chi": [
+      "0",
+      "0"
+    ],
+    "phi": [
+      "",
+      ""
+    ],
+    "qaz": [
+      "",
+      ""
+    ],
+    "naz": [
+      "",
+      ""
+    ],
+    "alpha": [
+      "",
+      ""
+    ],
+    "beta": [
+      "",
+      ""
+    ],
+    "psi": [
+      "",
+      ""
+    ]
+  }
+}
