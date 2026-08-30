@@ -208,3 +208,47 @@ def detector_hkl_summary(
             "l_min": L.min(), "l_max": L.max(),
         }
     )
+
+
+# --- support for the 3D view -------------------------------------------------
+
+# Mechanism angles the 3D diffractometer view understands, in Bernina naming.
+VIEW_ANGLES = ["mu", "eta", "chi", "phi", "delta", "gamma"]
+
+
+def solution_angles(df: pd.DataFrame, column) -> dict:
+    """Pull the six mechanism angles of one solution branch out of a
+    :func:`solve_hkl` table, as a plain {name: float} dict.
+
+    ``column`` may be a column label ('sol. 0') or an integer position.
+    Angles the table doesn't carry come back as 0.0, so the view always gets
+    a complete set.
+    """
+    col = df.columns[column] if isinstance(column, int) else column
+    series = df[col]
+    return {
+        name: (float(series[name]) if name in series.index and pd.notna(series[name]) else 0.0)
+        for name in VIEW_ANGLES
+    }
+
+
+def k_magnitude(energy: float) -> float:
+    """|k| in inverse angstrom, in diffcalc's 2*pi convention.
+
+    diffcalc's UB is built so that |UB @ (h,k,l)| = 2*pi/d, so the incident
+    wavevector has to use the same convention for Q = k' - k to come out at
+    2*pi/d and land on a reciprocal lattice node.
+    """
+    return 2.0 * np.pi / en2lam(energy)
+
+
+def reciprocal_basis(ubcalc: UBCalculation) -> list[list[float]]:
+    """The reciprocal cell vectors a*, b*, c* as the columns of a 3x3 matrix,
+    in the phi (sample) frame and in inverse angstrom.
+
+    These are just diffcalc's UB: its columns are the images of (1,0,0),
+    (0,1,0) and (0,0,1), i.e. a*, b* and c*. Returned in the phi frame - the
+    frame the sample circles rotate - so a viewer can attach them to the
+    sample and let mu/eta/chi/phi carry them into the lab frame.
+    """
+    return np.asarray(ubcalc.UB, dtype=float).tolist()
