@@ -1311,21 +1311,37 @@
     return new THREE.MeshStandardMaterial({ color, metalness: 0.3, roughness: 0.5 });
   }
 
+  // The canvas is sized to the measured text instead of a fixed 160x80, which
+  // silently clipped anything longer than a couple of characters ("Z (beam)",
+  // and any Q label carrying hkl). The sprite is then scaled by the same
+  // aspect ratio, so glyph height stays identical no matter how long the
+  // string is.
+  const LABEL_FONT = "bold 44px sans-serif";
+  const LABEL_H_PX = 80;      // canvas height
+  const LABEL_H_WORLD = 0.42; // on-screen height, as before
+  let _measureCtx = null;
+
   function makeTextSprite(text, color) {
+    if (!_measureCtx) _measureCtx = document.createElement("canvas").getContext("2d");
+    _measureCtx.font = LABEL_FONT;
+    const textW = Math.ceil(_measureCtx.measureText(String(text)).width);
     const canvas = document.createElement("canvas");
-    const size = 160;
-    canvas.width = size;
-    canvas.height = size / 2;
+    canvas.width = Math.max(LABEL_H_PX, textW + 24);   // a little padding
+    canvas.height = LABEL_H_PX;
     const ctx = canvas.getContext("2d");
-    ctx.font = "bold 44px sans-serif";
+    ctx.font = LABEL_FONT;
     ctx.fillStyle = color;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, size / 2, size / 4);
+    ctx.fillText(String(text), canvas.width / 2, canvas.height / 2);
     const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+    // non-power-of-two canvas: mipmaps would blur or drop it entirely
+    texture.minFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: false,
+                                                transparent: true });
     const sprite = new THREE.Sprite(material);
-    sprite.scale.set(0.85, 0.42, 1);
+    sprite.scale.set(LABEL_H_WORLD * (canvas.width / canvas.height), LABEL_H_WORLD, 1);
     return sprite;
   }
 
@@ -1510,6 +1526,11 @@
 
     const SCENE_MM_SCALE = 0.01;
     let lastTdetMm = 500;
+    // physical detector face size; the drawn body follows these, as does the
+    // detector cut of the Ewald sphere
+    let detWmm = 77;
+    let detHmm = 77;
+    let lastDetectorMesh = null;
     function rebuildArm(tdetMm) {
       lastTdetMm = tdetMm;
       while (armAssembly.children.length) armAssembly.remove(armAssembly.children[0]);
@@ -1521,7 +1542,13 @@
       ]);
       armAssembly.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: COLORS.detector })));
 
-      const detectorMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.7), mat(COLORS.detector));
+      // Face spans local X and local Z; local Y is the arm. At zero angles
+      // local X is SwissFEL y (vertical) and local Z is SwissFEL x
+      // (transverse), so HEIGHT goes on local X and WIDTH on local Z.
+      const detectorMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(detHmm * SCENE_MM_SCALE, 0.06, detWmm * SCENE_MM_SCALE),
+        mat(COLORS.detector));
+      lastDetectorMesh = detectorMesh;
       detectorMesh.position.y = armLen;
       armAssembly.add(detectorMesh);
 
@@ -1688,6 +1715,9 @@
           recipGroup.add(labelAt(qText, Q.clone().multiplyScalar(0.6), "#8800cc", off));
         }
 
+      }
+
+      if (recipState.kMag && (recipState.showEwald || recipState.showDetPatch)) {
         // --- Ewald sphere: centred on the tail of k, radius |k|, so it passes
         //     through the sample (reciprocal origin) and through the tip of Q.
         if (recipState.showEwald) {
@@ -1722,14 +1752,15 @@
         if (recipState.showDetPatch) {
           const armLen = lastTdetMm * SCENE_MM_SCALE;
           const q = deltaGroup.getWorldQuaternion(new THREE.Quaternion());
-          const w = recipState.detW * SCENE_MM_SCALE;
-          const hgt = recipState.detH * SCENE_MM_SCALE;
+          const w = detWmm * SCENE_MM_SCALE;
+          const hgt = detHmm * SCENE_MM_SCALE;
           const N = 20;
           const pts = [];
           for (let i = 0; i <= N; i++) {
             for (let j = 0; j <= N; j++) {
               // point on the detector face, in the delta group's local frame
-              const local = new THREE.Vector3((i / N - 0.5) * w, armLen, (j / N - 0.5) * hgt);
+              // same assignment as the body: height on local X, width on local Z
+              const local = new THREE.Vector3((i / N - 0.5) * hgt, armLen, (j / N - 0.5) * w);
               const dir = local.applyQuaternion(q).normalize();
               pts.push(kStart.clone().addScaledVector(dir, len));
             }
@@ -1808,6 +1839,13 @@
 
     function setRecip(opts) {
       Object.assign(recipState, opts);
+      // a size change has to rebuild the arm too, not just the Ewald patch
+      const newW = recipState.detW, newH = recipState.detH;
+      if (newW !== detWmm || newH !== detHmm) {
+        detWmm = newW;
+        detHmm = newH;
+        rebuildArm(lastTdetMm);
+      }
       updateRecip();
     }
 
@@ -1860,6 +1898,9 @@
         cellObjects: cellGroup.children.length,
         circlesVisible: Object.keys(circles).filter((n) => circles[n].ringMesh.visible).length,
         measuredHkl: lastMeasuredHkl,
+        detBodyScene: lastDetectorMesh
+          ? { width_along_SF_x: lastDetectorMesh.geometry.parameters.depth,
+              height_along_SF_y: lastDetectorMesh.geometry.parameters.width } : null,
         arcSweeps: Object.keys(circles).reduce((o, n) => (o[n] = circles[n].angle, o), {}),
       };
     }

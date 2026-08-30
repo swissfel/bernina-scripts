@@ -183,6 +183,16 @@ What is and is not trustworthy:
   material, plus a faint `WireframeGeometry` sphere, is what made it read as a
   balloon. Clip it with `renderer.localClippingEnabled` + six `THREE.Plane`s so
   a sphere far larger than the scene does not take over.
+- **Label sprites must be sized to their text.** The original helper drew onto
+  a fixed 160x80 canvas, which silently clipped anything longer than a couple
+  of characters ("Z (beam)", any Q label carrying hkl). Measure the string,
+  size the canvas to it, and scale the sprite by the same aspect so glyph
+  height stays constant. Non-power-of-two canvases need
+  `minFilter = LinearFilter` and `generateMipmaps = false`.
+- **Detector face axes**: at zero angles width is along SwissFEL x and height
+  along SwissFEL y. In the scene's local frame that is local Z and local X
+  respectively (local Y is the arm), so the box is
+  `BoxGeometry(height, thickness, width)` - easy to get backwards.
 - `FileUpload` and `data:` URI download links both work under voila, so config
   save/restore needs no server round trip.
 - Flexbox in the embedded page: use `width:100%` not `100vw` (inside an iframe
