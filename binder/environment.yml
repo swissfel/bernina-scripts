@@ -1,10 +1,10 @@
-# Environment for mybinder.org ONLY.
+# Environment for mybinder.org. This is the ONLY environment spec Binder uses:
+# repo2docker prefers config files in binder/ over the repo root, so nothing at
+# the top level (pixi.toml, a root environment.yml, a root postBuild) is read.
+# Keep it that way - a second Binder spec elsewhere is silently ignored, which
+# is exactly how a carefully written postBuild can end up never running.
 #
-# repo2docker prefers config files in binder/ over the ones in the repo root, so
-# ../environment.yml (the full beamline/dev environment, with PSI channels,
-# jungfrau_utils, bsread, the hdf5 pin, ...) is deliberately NOT used here.
-#
-# Two things matter for the ipywidgets applets to render:
+# Two things matter for the ipywidgets apps to render:
 #
 # 1. repo2docker installs this file into the SAME conda env that runs Binder's
 #    Jupyter server (true for any python >= 3.7). Anything listed here that makes
@@ -14,10 +14,13 @@
 #    whole Binder stack backwards.
 # 2. Binder's frontend ships jupyterlab_widgets 3.x / widgetsnbextension 4.x, which
 #    only speak the ipywidgets 8 model protocol. Keep the pin below, otherwise a
-#    solve is free to land on ipywidgets 7 and nothing renders. (widgets.TagsInput
-#    in the diffraction applet also needs ipywidgets >= 8.)
+#    solve is free to land on ipywidgets 7 and nothing renders.
 #
-# Do not list jupyter / jupyterlab / notebook / nodejs here - Binder provides them.
+# Do not list jupyter / jupyterlab / notebook / nodejs here - Binder provides
+# them, and voila runs happily alongside them (verified on mybinder with voila
+# 0.5.12 + jupyterlab 4.4.9). Do not pin voila to <0.5.8 and do not remove
+# jupyterlab from the image: that pairing was an attempt to fix blank widgets
+# that actually came from the panel code (see CLAUDE.md).
 
 channels:
   - conda-forge
@@ -27,7 +30,7 @@ dependencies:
   # widget stack - must stay compatible with Binder's frontend
   - ipywidgets>=8.1,<9
   - ipympl>=0.9.4
-  # applet dependencies
+  # what apps/ needs
   - numpy
   - scipy
   - matplotlib-base
@@ -35,7 +38,10 @@ dependencies:
   - voila
   - pip
   - pip:
-    # diffraction calculator (applet_sim_diff_bernina.ipynb)
+    # diffractometer angle solving (bernina_prep.diffraction)
     - diffcalc-core
-    # pump-probe time resolution (time_resolution.ipynb)
-    - git+https://github.com/htlemke/calx
+
+# The repo's own package (so apps/ can `import bernina_prep`) is installed by
+# binder/postBuild instead of with a "-e ." entry here: pip resolves such a path
+# against the working directory, which repo2docker does not document, not
+# against this file's location.

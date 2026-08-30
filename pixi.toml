@@ -1,0 +1,33 @@
+[workspace]
+name = "bernina-scripts"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+# Local dev environment only. Binder does NOT read this file - repo2docker
+# builds from binder/environment.yml (see README). This mirrors that spec as
+# closely as possible so `pixi run voila` is a fast local stand-in for a Binder
+# launch, with jupyterlab added for editing.
+#
+# Keep it in sync with binder/environment.yml when changing dependencies.
+
+[dependencies]
+python = "3.12.*"
+ipykernel = "*"        # Binder's base image already has it; needed locally
+numpy = "*"
+scipy = "*"
+matplotlib = "*"
+ipython = "*"
+ipympl = ">=0.9.4"
+ipywidgets = ">=8.1,<9"
+pandas = "*"
+pip = "*"
+voila = "*"            # do NOT pin <0.5.8 - see binder/environment.yml
+jupyterlab = "*"       # local editing; harmless alongside voila
+
+[pypi-dependencies]
+diffcalc_core = "*"
+bernina_prep = { path = ".", editable = true }
+
+[tasks]
+voila = "voila apps"
+lab = "jupyter lab"

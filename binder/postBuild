@@ -9,6 +9,16 @@
 # (VoilaExecutor.startup_timeout defaults to 60s).
 set -euo pipefail
 
+# Install the repo's own package so apps/ can `import bernina_prep`. Done here
+# rather than as a "-e ." line in binder/environment.yml because pip resolves
+# such a path against the working directory; this derives the repo root from
+# the script's own location instead, so it does not depend on where
+# repo2docker happens to run from. Dependencies come from environment.yml.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+echo "postBuild: installing ${REPO_DIR} (bernina_prep) in editable mode"
+pip install --no-deps -e "${REPO_DIR}"
+python -c "import bernina_prep; print('bernina_prep import OK:', bernina_prep.__file__)"
+
 mkdir -p "${HOME}/.jupyter"
 
 read -r -d '' VOILA_CFG <<'JSON' || true
