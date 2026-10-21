@@ -1,0 +1,35 @@
+# Environment for RenkuLab ("Create from code" session launcher, context
+# directory: renku). Binder does not read this file - it only uses binder/.
+#
+# Same packages as binder/environment.yml, with two differences:
+# - Renku does not run binder/postBuild, so bernina_prep is installed here from
+#   the GitHub archive of main (a zip URL, so the build does not need git).
+#   It is a copy taken at build time: after changing bernina_prep, rebuild the
+#   environment in Renku (or pip install -e the cloned repo inside a session).
+# - Renku runs JupyterLab (and voila, which is a server extension) from its own
+#   environment. Those server-side packages are listed in
+#   renku/jupyterlab_extensions.txt, not here. ipympl / ipywidgets are pinned to
+#   the same versions on both sides, so kernel and browser speak the same protocol.
+#
+# The widget rules from binder/environment.yml and CLAUDE.md apply here too.
+
+channels:
+  - conda-forge
+  - nodefaults
+
+dependencies:
+  - python=3.12
+  # widget stack - ipywidgets 8 model protocol, see binder/environment.yml
+  - ipywidgets=8.1.9   # same as renku/jupyterlab_extensions.txt
+  - ipympl=0.10.0
+  # what apps/ needs
+  - numpy
+  - scipy
+  - matplotlib-base
+  - pandas
+  - pip
+  - pip:
+    # diffractometer angle solving (bernina_prep.diffraction)
+    - diffcalc-core
+    # the repo's own package (replaces binder/postBuild)
+    - bernina-prep @ https://github.com/swissfel/bernina-scripts/archive/refs/heads/main.zip

@@ -1,0 +1,8 @@
+# Installed by Renku's JupyterLab buildpack into the JupyterLab *server*
+# environment (renku/environment.yml only goes into the kernel).
+# - voila is a server extension: provides <session>/voila/tree/apps
+# - ipympl / jupyterlab_widgets: browser side of the widgets; keep the versions
+#   in step with renku/environment.yml
+voila
+ipympl==0.10.0
+jupyterlab_widgets==3.0.17
