@@ -18,8 +18,19 @@
     color: var(--text);
     background: var(--bg);
   }
-  #app { display: flex; height: 100vh; width: 100vw; }
+  /* 100% not 100vw: inside an iframe 100vw includes the scrollbar width and
+     overflows horizontally */
+  #app { display: flex; height: 100vh; width: 100%; }
   #viewport { flex: 1 1 auto; position: relative; min-width: 0; }
+  /* controls under the plot: better on a phone, and inside a notebook column.
+     min-height:0 is required - without it a flex item in a column refuses to
+     shrink below its content height and pushes the panel off the bottom. */
+  #app.controls-below { flex-direction: column; }
+  #app.controls-below #viewport { flex: 1 1 auto; min-height: 0; }
+  #app.controls-below #panel {
+    flex: 0 0 45%; max-height: 45%; width: 100%;
+    border-left: none; border-top: 1px solid var(--border);
+  }
   #viewport canvas { display: block; }
   #panel {
     flex: 0 0 320px;
@@ -58,6 +69,8 @@
   .hint { font-size: 11px; color: #777; margin-top: 6px; line-height: 1.4; }
   code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
   #status { font-size: 11px; color: #a33; min-height: 14px; margin-top: 6px; }
+  .chk { display:block; margin:4px 0; font-size:12px; cursor:pointer; }
+  .chk input { margin-right:6px; vertical-align:middle; }
 </style>
 </head>
 <body>
@@ -81,7 +94,7 @@
       mockup itself is settled.
     </div>
 
-    <div class="section">
+    <div class="section" id="sample-circles-section">
       <h2>Sample circles</h2>
       <div class="angle-row">
         <label><span><span class="swatch" style="background:#e6550d"></span>mu &mdash; tower tilt (rot. about X)</span><span id="mu-val">0.0&deg;</span></label>
@@ -113,7 +126,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" id="detector-circles-section">
       <h2>Detector circles</h2>
       <div class="angle-row">
         <label><span><span class="swatch" style="background:#3182bd"></span>delta &mdash; in-plane swing (Z)</span><span id="delta-val">0.0&deg;</span></label>
@@ -140,10 +153,11 @@
           <input type="number" id="tdet-num" min="10" max="5000" step="5" value="500">
         </div>
       </div>
-      <div class="hint">
-        Simple placeholder marker for now, not sized to a real detector.
-        Default view frames up to 1 m.
+      <div class="row-controls" style="margin-top:6px;">
+        <label style="font-size:12px;">width <input type="number" id="det-w" min="1" max="1000" step="1" value="77"> mm</label>
+        <label style="font-size:12px;">height <input type="number" id="det-h" min="1" max="1000" step="1" value="77"> mm</label>
       </div>
+      <div class="hint">Size is used for the detector cut of the Ewald sphere.</div>
     </div>
 
     <div class="section">
@@ -151,19 +165,27 @@
     </div>
 
     <div class="section">
-      <h2>Paste a solution</h2>
-      <textarea id="paste-box" placeholder="mu 14.310&#10;delta 0.000&#10;gamma 28.621&#10;eta 0.000&#10;chi 0.000&#10;phi 0.000">mu 14.310
-delta 0.000
-gamma 28.621
-eta 0.000
-chi 0.000
-phi 0.000</textarea>
-      <div class="row-controls" style="margin-top:6px;">
-        <button id="apply-paste-btn">Apply</button>
+      <h2>Display</h2>
+      <label class="chk"><input type="checkbox" id="show-circles" checked> show rotation circles</label>
+      <label class="chk"><input type="checkbox" id="show-recip"> show reciprocal vectors (k, k&prime;, Q)</label>
+      <label class="chk"><input type="checkbox" id="show-cell"> show reciprocal unit cell (a*, b*, c*)</label>
+      <label class="chk"><input type="checkbox" id="show-hkl-cell"> label Q with hkl + cell around it</label>
+      <label class="chk"><input type="checkbox" id="show-ewald"> show Ewald sphere (radius |k|)</label>
+      <label class="chk"><input type="checkbox" id="show-det-patch"> show detector cut of the Ewald sphere</label>
+      <label class="chk"><input type="checkbox" id="show-angle-controls" checked> show angle controls</label>
+      <label class="chk"><input type="checkbox" id="controls-below" checked> controls under the plot</label>
+      <div class="angle-row" style="margin-top:8px;">
+        <label><span>reciprocal scale &mdash; 1 &Aring;<sup>&minus;1</sup> drawn as</span><span id="rec-scale-val">5 cm</span></label>
+        <div class="row-controls">
+          <input type="range" id="rec-scale" min="1" max="50" step="0.5" value="5" style="flex:1">
+          <input type="number" id="rec-scale-num" min="1" max="50" step="0.5" value="5">
+        </div>
       </div>
       <div class="hint">
-        Paste any "name value" lines &mdash; e.g. copy a <code>sol. N</code> column straight out of
-        <code>apps/diffraction_reflections.ipynb</code>'s results table (nu/gamma both accepted).
+        Reciprocal lengths follow diffcalc's own 2&pi; convention
+        (|k| = 2&pi;/&lambda;, |Q| = 2&pi;/d, |a*| = 2&pi;/a), so the tip of Q
+        sits on a node of the reciprocal cell. The slider sets how many cm of
+        the direct-space scene represent 1 &Aring;<sup>&minus;1</sup> (5 cm by default).
       </div>
       <div id="status"></div>
     </div>
@@ -1260,12 +1282,14 @@ phi 0.000</textarea>
 
   const VIEW_SPAN = 10; // scene units = 1000 mm at SCENE_MM_SCALE=0.01
 
-  const RING_MU = 3.4;
-  const RING_ETA = 2.9;
+  // Outermost to innermost: gamma, small gap, delta (detector), then a larger
+  // gap down to the sample stack mu > eta > chi > phi with small gaps.
+  const RING_GAM = 3.9;
+  const RING_DELTA = 3.6;
+  const RING_MU = 3.0;
+  const RING_ETA = 2.7;
   const RING_CHI = 2.4;
-  const RING_PHI = 1.9;
-  const RING_GAM = 3.4;
-  const RING_DELTA = 2.9;
+  const RING_PHI = 2.1;
   const TUBE = 0.025; // thin
 
   const COLORS = {
@@ -1287,21 +1311,37 @@ phi 0.000</textarea>
     return new THREE.MeshStandardMaterial({ color, metalness: 0.3, roughness: 0.5 });
   }
 
+  // The canvas is sized to the measured text instead of a fixed 160x80, which
+  // silently clipped anything longer than a couple of characters ("Z (beam)",
+  // and any Q label carrying hkl). The sprite is then scaled by the same
+  // aspect ratio, so glyph height stays identical no matter how long the
+  // string is.
+  const LABEL_FONT = "bold 44px sans-serif";
+  const LABEL_H_PX = 80;      // canvas height
+  const LABEL_H_WORLD = 0.42; // on-screen height, as before
+  let _measureCtx = null;
+
   function makeTextSprite(text, color) {
+    if (!_measureCtx) _measureCtx = document.createElement("canvas").getContext("2d");
+    _measureCtx.font = LABEL_FONT;
+    const textW = Math.ceil(_measureCtx.measureText(String(text)).width);
     const canvas = document.createElement("canvas");
-    const size = 160;
-    canvas.width = size;
-    canvas.height = size / 2;
+    canvas.width = Math.max(LABEL_H_PX, textW + 24);   // a little padding
+    canvas.height = LABEL_H_PX;
     const ctx = canvas.getContext("2d");
-    ctx.font = "bold 44px sans-serif";
+    ctx.font = LABEL_FONT;
     ctx.fillStyle = color;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, size / 2, size / 4);
+    ctx.fillText(String(text), canvas.width / 2, canvas.height / 2);
     const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+    // non-power-of-two canvas: mipmaps would blur or drop it entirely
+    texture.minFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: false,
+                                                transparent: true });
     const sprite = new THREE.Sprite(material);
-    sprite.scale.set(0.85, 0.42, 1);
+    sprite.scale.set(LABEL_H_WORLD * (canvas.width / canvas.height), LABEL_H_WORLD, 1);
     return sprite;
   }
 
@@ -1329,7 +1369,7 @@ phi 0.000</textarea>
   function directionArrow(radius, color, axis, sign, sweepDeg = 30) {
     const group = new THREE.Group();
     const sweep = sign * deg(sweepDeg);
-    const n = 16;
+    const n = Math.max(16, Math.round(sweepDeg / 4));
     const pts = [];
     for (let i = 0; i <= n; i++) pts.push(pointOnRing(radius, axis, (sweep * i) / n));
     const curve = new THREE.CatmullRomCurve3(pts);
@@ -1365,6 +1405,7 @@ phi 0.000</textarea>
     camera.position.set(VIEW_SPAN * 1.0, VIEW_SPAN * 1.05, -VIEW_SPAN * 1.4);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.localClippingEnabled = true;   // used to crop the Ewald sphere
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(renderer.domElement);
@@ -1406,54 +1447,110 @@ phi 0.000</textarea>
     scene.add(arrow(SF_Z, beamStart, VIEW_SPAN, COLORS.beamIn, 0.5, 0.22));
 
     // --- sample tower: mu -> eta -> chi -> phi (nested, base to sample) ---
+    // Each circle: the ring itself sits in the rotating group, but its arc
+    // indicator sits in the PARENT frame. That way the arc does not turn with
+    // the circle - it spans from zero to the current angle, so its length
+    // reads as the value that was set.
+    const circles = {};
+    const IDLE_SWEEP_DEG = 30;
+
+    function rebuildArc(name, angleDeg) {
+      const c = circles[name];
+      while (c.arcHolder.children.length) {
+        const child = c.arcHolder.children[0];
+        c.arcHolder.remove(child);
+        child.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+      }
+      // The arc is always swept in this circle's own positive direction, so
+      // the arrowhead never flips. A negative angle is therefore drawn as the
+      // complementary 2*pi - |angle| arc, which ends at the same place (the
+      // two differ by a full turn).
+      let a = angleDeg % 360;
+      if (a < 0) a += 360;
+      const idle = a < 1e-9;
+      const sweepDeg = idle ? IDLE_SWEEP_DEG : a;
+      c.arcHolder.add(directionArrow(c.radius, c.color, c.axis, c.sign, sweepDeg));
+      c.arcHolder.visible = c.visible;
+      c.angle = angleDeg;
+    }
+
+    function addCircle(name, parent, group, radius, color, axis) {
+      const ringMesh = ring(radius, color, axis);
+      group.add(ringMesh);
+      const arcHolder = new THREE.Group();
+      parent.add(arcHolder);
+      circles[name] = { radius, color, axis, sign: ANGLE_SIGN[name],
+                        ringMesh, arcHolder, angle: 0, visible: true };
+      rebuildArc(name, 0);
+    }
+
     const muGroup = new THREE.Group();
     scene.add(muGroup);
-    muGroup.add(ring(RING_MU, COLORS.mu, "x"));
-    muGroup.add(directionArrow(RING_MU, COLORS.mu, "x", ANGLE_SIGN.mu));
+    addCircle("mu", scene, muGroup, RING_MU, COLORS.mu, "x");
 
     const etaGroup = new THREE.Group();
     muGroup.add(etaGroup);
-    etaGroup.add(ring(RING_ETA, COLORS.eta, "z"));
-    etaGroup.add(directionArrow(RING_ETA, COLORS.eta, "z", ANGLE_SIGN.eta));
+    addCircle("eta", muGroup, etaGroup, RING_ETA, COLORS.eta, "z");
 
     const chiGroup = new THREE.Group();
     etaGroup.add(chiGroup);
-    chiGroup.add(ring(RING_CHI, COLORS.chi, "y"));
-    chiGroup.add(directionArrow(RING_CHI, COLORS.chi, "y", ANGLE_SIGN.chi));
+    addCircle("chi", etaGroup, chiGroup, RING_CHI, COLORS.chi, "y");
 
     const phiGroup = new THREE.Group();
     chiGroup.add(phiGroup);
-    phiGroup.add(ring(RING_PHI, COLORS.phi, "z"));
-    phiGroup.add(directionArrow(RING_PHI, COLORS.phi, "z", ANGLE_SIGN.phi));
+    addCircle("phi", chiGroup, phiGroup, RING_PHI, COLORS.phi, "z");
 
     // Rectangular sample plate: thin along local Z, so its face normal is
     // +Z at rest -- which is the on-screen "X" (SwissFEL transverse) axis,
     // matching SF_X = diffcalc Z above. Same nesting as everything else in
     // phiGroup, so the normal rotates correctly with mu/eta/chi/phi.
+    // The sample SURFACE sits at the origin (which is also the reciprocal-space
+    // origin), so the platelet body hangs behind it, on the opposite side from
+    // the surface normal. The group's +Z is that normal: it is aimed along
+    // n_phi (= UB * n_hkl, normalised) as soon as the notebook supplies one, so
+    // the plate shows the surface orientation that was actually entered rather
+    // than a fixed axis.
+    const SAMPLE_T = 0.08;
+    const sampleGroup = new THREE.Group();
+    phiGroup.add(sampleGroup);
     const sampleMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.9, 0.9, 0.08),
+      new THREE.BoxGeometry(0.9, 0.9, SAMPLE_T),
       new THREE.MeshStandardMaterial({ color: COLORS.sample, metalness: 0.1, roughness: 0.3 })
     );
-    phiGroup.add(sampleMesh);
-    phiGroup.add(arrow(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1.6, 0xcc0066, 0.35, 0.16));
+    sampleMesh.position.z = -SAMPLE_T / 2;   // body behind the surface plane
+    sampleGroup.add(sampleMesh);
+    sampleGroup.add(arrow(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0),
+                          1.6, 0xcc0066, 0.35, 0.16));
+
+    function setSurfaceNormal(nPhi) {
+      if (!nPhi || nPhi.length !== 3) return;
+      const n = new THREE.Vector3(nPhi[0], nPhi[1], nPhi[2]);
+      if (n.lengthSq() < 1e-12) return;
+      sampleGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n.normalize());
+    }
 
     // --- detector: gamma (outer) -> delta (inner) -- see file header note ---
     const gamGroup = new THREE.Group();
     scene.add(gamGroup);
-    gamGroup.add(ring(RING_GAM, COLORS.gamma, "x"));
-    gamGroup.add(directionArrow(RING_GAM, COLORS.gamma, "x", ANGLE_SIGN.gamma));
+    addCircle("gamma", scene, gamGroup, RING_GAM, COLORS.gamma, "x");
 
     const deltaGroup = new THREE.Group();
     gamGroup.add(deltaGroup);
-    deltaGroup.add(ring(RING_DELTA, COLORS.delta, "z"));
-    deltaGroup.add(directionArrow(RING_DELTA, COLORS.delta, "z", ANGLE_SIGN.delta));
+    addCircle("delta", gamGroup, deltaGroup, RING_DELTA, COLORS.delta, "z");
 
     // simple detector arm: a thin line + small marker, length follows tdet
     const armAssembly = new THREE.Group();
     deltaGroup.add(armAssembly);
 
     const SCENE_MM_SCALE = 0.01;
+    let lastTdetMm = 500;
+    // physical detector face size; the drawn body follows these, as does the
+    // detector cut of the Ewald sphere
+    let detWmm = 77;
+    let detHmm = 77;
+    let lastDetectorMesh = null;
     function rebuildArm(tdetMm) {
+      lastTdetMm = tdetMm;
       while (armAssembly.children.length) armAssembly.remove(armAssembly.children[0]);
       const armLen = tdetMm * SCENE_MM_SCALE;
 
@@ -1463,7 +1560,13 @@ phi 0.000</textarea>
       ]);
       armAssembly.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: COLORS.detector })));
 
-      const detectorMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.7), mat(COLORS.detector));
+      // Face spans local X and local Z; local Y is the arm. At zero angles
+      // local X is SwissFEL y (vertical) and local Z is SwissFEL x
+      // (transverse), so HEIGHT goes on local X and WIDTH on local Z.
+      const detectorMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(detHmm * SCENE_MM_SCALE, 0.06, detWmm * SCENE_MM_SCALE),
+        mat(COLORS.detector));
+      lastDetectorMesh = detectorMesh;
       detectorMesh.position.y = armLen;
       armAssembly.add(detectorMesh);
 
@@ -1487,6 +1590,313 @@ phi 0.000</textarea>
     grid.position.x = -3.5;
     scene.add(grid);
 
+    // --- reciprocal space: k, k', Q (lab frame) and the reciprocal cell ---
+    // Crystallographic convention, |k| = 1/lambda, so |Q| = |k' - k| = 1/d.
+    // k, k' and Q are lab-frame quantities so they hang off the scene root;
+    // a*, b*, c* are sample-frame, so they hang off phiGroup and rotate with
+    // the tower automatically.
+    const recipGroup = new THREE.Group();
+    scene.add(recipGroup);
+    const cellGroup = new THREE.Group();
+    phiGroup.add(cellGroup);
+
+    // kMag = |k| in the SAME convention as diffcalc's UB, which is the 2*pi
+    // one (|a*| = 2*pi/a), so |Q| = 2*pi/d and the tip of Q lands exactly on
+    // the reciprocal lattice node of the drawn cell. Supplied by the notebook.
+    const recipState = { show: false, showCell: false, showHklCell: false,
+                         showEwald: false, showDetPatch: false,
+                         cmPerInvAng: 5, kMag: null, ub: null,
+                         detW: 77, detH: 77 };
+
+    // Keeps the Ewald sphere inside the view box: it can be far larger than
+    // the mechanism, and the view deliberately does not resize to fit it.
+    const CLIP = VIEW_SPAN;
+    const clipPlanes = [
+      new THREE.Plane(new THREE.Vector3(1, 0, 0), CLIP),
+      new THREE.Plane(new THREE.Vector3(-1, 0, 0), CLIP),
+      new THREE.Plane(new THREE.Vector3(0, 1, 0), CLIP),
+      new THREE.Plane(new THREE.Vector3(0, -1, 0), CLIP),
+      new THREE.Plane(new THREE.Vector3(0, 0, 1), CLIP),
+      new THREE.Plane(new THREE.Vector3(0, 0, -1), CLIP),
+    ];
+
+    function clearGroup(g) {
+      while (g.children.length) {
+        const c = g.children[0];
+        g.remove(c);
+        if (c.traverse) c.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+      }
+    }
+
+    // Invert a 3x3 given as rows; used to turn a measured Q back into hkl.
+    function invert3(m) {
+      const [a, b, c] = m[0], [d, e, f] = m[1], [g, h, i] = m[2];
+      const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+      if (!isFinite(det) || Math.abs(det) < 1e-18) return null;
+      const s = 1 / det;
+      return [
+        [(e * i - f * h) * s, (c * h - b * i) * s, (b * f - c * e) * s],
+        [(f * g - d * i) * s, (a * i - c * g) * s, (c * d - a * f) * s],
+        [(d * h - e * g) * s, (b * g - a * h) * s, (a * e - b * d) * s],
+      ];
+    }
+
+    function mul3(m, v) {
+      return new THREE.Vector3(
+        m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z,
+        m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z,
+        m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z
+      );
+    }
+
+    // hkl actually being measured, from the current circle positions:
+    // undo the sample rotation to get q in the phi frame, then apply UB^-1.
+    // Live, so dragging any angle updates the label and the cell around Q.
+    function measuredHkl(qSceneVec, sceneUnitsPerInvAng) {
+      if (!recipState.ub || sceneUnitsPerInvAng <= 0) return null;
+      const ubInv = invert3(recipState.ub);
+      if (!ubInv) return null;
+      phiGroup.updateMatrixWorld(true);
+      const qPhi = qSceneVec.clone()
+        .divideScalar(sceneUnitsPerInvAng)
+        .applyQuaternion(phiGroup.getWorldQuaternion(new THREE.Quaternion()).invert());
+      const hkl = mul3(ubInv, qPhi);
+      return [hkl.x, hkl.y, hkl.z];
+    }
+
+    function labelAt(text, pos, color, offset) {
+      const sprite = makeTextSprite(text, color);
+      sprite.position.copy(pos);
+      if (offset) sprite.position.add(offset);
+      return sprite;
+    }
+
+    function thinLine(a, b, color) {
+      const geo = new THREE.BufferGeometry().setFromPoints([a, b]);
+      return new THREE.Line(geo, new THREE.LineBasicMaterial({ color }));
+    }
+
+    // scene units per inverse angstrom: cm -> mm -> scene
+    function recScale() { return recipState.cmPerInvAng * 10 * SCENE_MM_SCALE; }
+
+    let lastMeasuredHkl = null;
+
+    function updateRecip() {
+      clearGroup(recipGroup);
+      clearGroup(cellGroup);
+      lastMeasuredHkl = null;
+      const s = recScale();
+
+      // Geometry of the current setting, computed whether or not the vectors
+      // are shown - the hkl cell option needs it too.
+      let len = 0, beam = null, outDir = null, kStart = null, Q = null, qLen = 0;
+      let measured = null;
+      if (recipState.kMag) {
+        len = recipState.kMag * s;                     // |k| drawn length
+        beam = new THREE.Vector3(0, 1, 0);             // diffcalc Y = beam
+        deltaGroup.updateMatrixWorld(true);
+        outDir = new THREE.Vector3(0, 1, 0)
+          .applyQuaternion(deltaGroup.getWorldQuaternion(new THREE.Quaternion()))
+          .normalize();
+        kStart = beam.clone().multiplyScalar(-len);    // k ends at sample
+        Q = outDir.clone().multiplyScalar(len).sub(beam.clone().multiplyScalar(len));
+        qLen = Q.length();
+        measured = qLen > 1e-9 ? measuredHkl(Q, s) : null;
+        lastMeasuredHkl = measured;
+      }
+
+      if (recipState.show && recipState.kMag) {
+        const origin = new THREE.Vector3(0, 0, 0);
+
+        recipGroup.add(arrow(beam, kStart, len, 0xff0033, len * 0.09, len * 0.035));
+        recipGroup.add(arrow(outDir, origin, len, 0xff7f0e, len * 0.09, len * 0.035));
+
+        if (qLen > 1e-6) {
+          recipGroup.add(arrow(Q.clone().normalize(), origin, qLen, 0x8800cc,
+                               qLen * 0.12, qLen * 0.05));
+        }
+        // closes the triangle: start of k -> tip of Q (this segment is k')
+        recipGroup.add(thinLine(kStart, Q, 0x888888));
+        // and the fourth side, tip of Q -> tip of k'
+        const kPrimeEnd = outDir.clone().multiplyScalar(len);
+        recipGroup.add(thinLine(Q, kPrimeEnd, 0x888888));
+
+        // names on the vectors
+        const off = new THREE.Vector3(0.25, 0.25, 0);
+        recipGroup.add(labelAt("k", beam.clone().multiplyScalar(-len * 0.5), "#ff0033", off));
+        recipGroup.add(labelAt("k'", kPrimeEnd.clone().multiplyScalar(0.62), "#e06a00", off));
+        if (qLen > 1e-6) {
+          let qText = "Q";
+          if (recipState.showHklCell && measured) {
+            qText = "Q (" + measured.map((v) => (Math.round(v * 100) / 100)).join(", ") + ")";
+          }
+          recipGroup.add(labelAt(qText, Q.clone().multiplyScalar(0.6), "#8800cc", off));
+        }
+
+      }
+
+      if (recipState.kMag && (recipState.showEwald || recipState.showDetPatch)) {
+        // --- Ewald sphere: centred on the tail of k, radius |k|, so it passes
+        //     through the sample (reciprocal origin) and through the tip of Q.
+        if (recipState.showEwald) {
+          // Rendering only the BACK side gives the shell a readable curvature
+          // (you see the far wall through the near one) instead of the flat
+          // wash a double-sided basic material produced; a lit material adds
+          // the shading that made it read as a surface at all, and a faint
+          // lat/long wireframe carries the shape where the shading is weak.
+          const shell = new THREE.Mesh(
+            new THREE.SphereGeometry(len, 64, 40),
+            new THREE.MeshStandardMaterial({
+              color: 0x4c9be8, transparent: true, opacity: 0.16,
+              side: THREE.BackSide, depthWrite: false,
+              metalness: 0.0, roughness: 0.35, clippingPlanes: clipPlanes,
+            })
+          );
+          shell.position.copy(kStart);
+          recipGroup.add(shell);
+
+          const grid = new THREE.LineSegments(
+            new THREE.WireframeGeometry(new THREE.SphereGeometry(len, 24, 14)),
+            new THREE.LineBasicMaterial({
+              color: 0x4c9be8, transparent: true, opacity: 0.22,
+              depthWrite: false, clippingPlanes: clipPlanes,
+            })
+          );
+          grid.position.copy(kStart);
+          recipGroup.add(grid);
+        }
+
+        // --- the patch of that sphere the detector actually sees ---
+        if (recipState.showDetPatch) {
+          const armLen = lastTdetMm * SCENE_MM_SCALE;
+          const q = deltaGroup.getWorldQuaternion(new THREE.Quaternion());
+          const w = detWmm * SCENE_MM_SCALE;
+          const hgt = detHmm * SCENE_MM_SCALE;
+          const N = 20;
+          const pts = [];
+          for (let i = 0; i <= N; i++) {
+            for (let j = 0; j <= N; j++) {
+              // point on the detector face, in the delta group's local frame
+              // same assignment as the body: height on local X, width on local Z
+              const local = new THREE.Vector3((i / N - 0.5) * hgt, armLen, (j / N - 0.5) * w);
+              const dir = local.applyQuaternion(q).normalize();
+              pts.push(kStart.clone().addScaledVector(dir, len));
+            }
+          }
+          const pos = new Float32Array(pts.length * 3);
+          pts.forEach((p, i) => { pos[3 * i] = p.x; pos[3 * i + 1] = p.y; pos[3 * i + 2] = p.z; });
+          const idx = [];
+          for (let i = 0; i < N; i++) {
+            for (let j = 0; j < N; j++) {
+              const a0 = i * (N + 1) + j, b0 = a0 + 1, c0 = a0 + (N + 1), d0 = c0 + 1;
+              idx.push(a0, c0, b0, b0, c0, d0);
+            }
+          }
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+          geo.setIndex(idx);
+          geo.computeVertexNormals();
+          recipGroup.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            color: 0xdd2222, transparent: true, opacity: 0.35,
+            side: THREE.DoubleSide, depthWrite: false,
+          })));
+        }
+      }
+
+      // Target reflections (two-reflection mode): a node at UB.h, hung in the
+      // sample frame so it turns with the circles, plus a thin line from the
+      // Ewald sphere's centre to it - that line is the node's own k', and it
+      // is |k| long exactly when the node sits on the sphere.
+      if (recipState.targets && recipState.targets.length && recipState.ub && recipState.kMag) {
+        const css = ["#0a8f6a", "#b5179e"];
+        const hex = [0x0a8f6a, 0xb5179e];
+        phiGroup.updateMatrixWorld(true);
+        recipState.targets.forEach((h, i) => {
+          const node = mul3(recipState.ub, new THREE.Vector3(h[0], h[1], h[2])).multiplyScalar(s);
+          const dot = new THREE.Mesh(new THREE.SphereGeometry(Math.max(len * 0.025, 0.04), 16, 12),
+                                     new THREE.MeshBasicMaterial({ color: hex[i % 2] }));
+          dot.position.copy(node);
+          cellGroup.add(dot);
+          cellGroup.add(labelAt("(" + h.map((v) => Math.round(v * 100) / 100).join(" ") + ")",
+                                node, css[i % 2], new THREE.Vector3(0.2, 0.2, 0)));
+          const world = phiGroup.localToWorld(node.clone());
+          recipGroup.add(thinLine(kStart, world, hex[i % 2]));
+        });
+      }
+
+      if ((recipState.showCell || (recipState.showHklCell && lastMeasuredHkl)) && recipState.ub) {
+        const U = recipState.ub;   // columns are a*, b*, c* in the phi frame
+        const col = (j) => new THREE.Vector3(U[0][j], U[1][j], U[2][j]).multiplyScalar(s);
+        const A = col(0), B = col(1), C = col(2);
+        const origin = new THREE.Vector3(0, 0, 0);
+        if (recipState.showCell) {
+        const axisColors = [0xcc0000, 0x00aa00, 0x2255cc];   // a*=red b*=green c*=blue
+        const axisNames = ["a*", "b*", "c*"];
+        const axisCss = ["#cc0000", "#00aa00", "#2255cc"];
+        [A, B, C].forEach((v, i) => {
+          const L = v.length();
+          if (L < 1e-9) return;
+          cellGroup.add(arrow(v.clone().normalize(), origin, L, axisColors[i],
+                              L * 0.10, L * 0.035));
+          cellGroup.add(labelAt(axisNames[i], v.clone().multiplyScalar(1.08), axisCss[i]));
+        });
+        const P = (x, y, z) => new THREE.Vector3()
+          .addScaledVector(A, x).addScaledVector(B, y).addScaledVector(C, z);
+        const edges = [
+          [P(1,0,0), P(1,1,0)], [P(0,1,0), P(1,1,0)],
+          [P(1,0,0), P(1,0,1)], [P(0,0,1), P(1,0,1)],
+          [P(0,1,0), P(0,1,1)], [P(0,0,1), P(0,1,1)],
+          [P(1,1,0), P(1,1,1)], [P(1,0,1), P(1,1,1)], [P(0,1,1), P(1,1,1)],
+        ];
+        for (const [a, b] of edges) cellGroup.add(thinLine(a, b, 0x222222));
+        }
+
+        // Optionally also outline the cell the requested reflection sits in:
+        // hkl (0.1, 2.99, 3) -> the cell spanning h 0-1, k 2-3, l 3-4.
+        if (recipState.showHklCell && lastMeasuredHkl) {
+          const n = lastMeasuredHkl.map(Math.floor);
+          const base = new THREE.Vector3()
+            .addScaledVector(A, n[0]).addScaledVector(B, n[1]).addScaledVector(C, n[2]);
+          const Pn = (x, y, z) => base.clone()
+            .addScaledVector(A, x).addScaledVector(B, y).addScaledVector(C, z);
+          // the three edges leaving the corner keep the a*/b*/c* colours; the
+          // rest of the body is drawn in a distinct colour so this cell is
+          // still clearly the one around Q rather than the one at the origin
+          cellGroup.add(thinLine(Pn(0,0,0), Pn(1,0,0), 0xcc0000));   // a*
+          cellGroup.add(thinLine(Pn(0,0,0), Pn(0,1,0), 0x00aa00));   // b*
+          cellGroup.add(thinLine(Pn(0,0,0), Pn(0,0,1), 0x2255cc));   // c*
+          const cellEdges = [
+            [Pn(1,0,0),Pn(1,1,0)], [Pn(0,1,0),Pn(1,1,0)],
+            [Pn(1,0,0),Pn(1,0,1)], [Pn(0,0,1),Pn(1,0,1)],
+            [Pn(0,1,0),Pn(0,1,1)], [Pn(0,0,1),Pn(0,1,1)],
+            [Pn(1,1,0),Pn(1,1,1)], [Pn(1,0,1),Pn(1,1,1)], [Pn(0,1,1),Pn(1,1,1)],
+          ];
+          for (const [a, b] of cellEdges) cellGroup.add(thinLine(a, b, 0xcc6600));
+        }
+      }
+    }
+
+    function setRecip(opts) {
+      Object.assign(recipState, opts);
+      // a size change has to rebuild the arm too, not just the Ewald patch
+      const newW = recipState.detW, newH = recipState.detH;
+      if (newW !== detWmm || newH !== detHmm) {
+        detWmm = newW;
+        detHmm = newH;
+        rebuildArm(lastTdetMm);
+      }
+      updateRecip();
+    }
+
+    function setShowCircles(show) {
+      for (const name in circles) {
+        const c = circles[name];
+        c.visible = show;
+        c.ringMesh.visible = show;
+        c.arcHolder.visible = show;
+      }
+    }
+
     function setAngles({ mu = 0, eta = 0, chi = 0, phi = 0, delta = 0, gamma = 0 }) {
       muGroup.rotation.x = deg(mu);
       etaGroup.rotation.z = -deg(eta);
@@ -1494,11 +1904,15 @@ phi 0.000</textarea>
       phiGroup.rotation.z = -deg(phi);
       gamGroup.rotation.x = deg(gamma);
       deltaGroup.rotation.z = -deg(delta);
+      const vals = { mu, eta, chi, phi, delta, gamma };
+      for (const name in circles) rebuildArc(name, vals[name]);
+      updateRecip();   // k' follows the detector circles
     }
     setAngles({});
 
     function setDetectorDistance(tdetMm) {
       rebuildArm(tdetMm);
+      updateRecip();   // the detector patch depends on the arm length
     }
 
     function resize() {
@@ -1517,7 +1931,33 @@ phi 0.000</textarea>
     }
     animate();
 
-    return { setAngles, setDetectorDistance, resize };
+    function debugCounts() {
+      return {
+        recipObjects: recipGroup.children.length,
+        cellObjects: cellGroup.children.length,
+        circlesVisible: Object.keys(circles).filter((n) => circles[n].ringMesh.visible).length,
+        measuredHkl: lastMeasuredHkl,
+        surfaceNormalPhi: sampleGroup.localToWorld(new THREE.Vector3(0, 0, 1))
+          .sub(sampleGroup.localToWorld(new THREE.Vector3(0, 0, 0))).toArray(),
+        samplePlateOffsetZ: sampleMesh.position.z,
+        detBodyScene: lastDetectorMesh
+          ? { width_along_SF_x: lastDetectorMesh.geometry.parameters.depth,
+              height_along_SF_y: lastDetectorMesh.geometry.parameters.width } : null,
+        arcSweeps: Object.keys(circles).reduce((o, n) => (o[n] = circles[n].angle, o), {}),
+        // |node - Ewald centre| / |k| per target: exactly 1 in Bragg condition
+        targetsOnSphere: (recipState.targets || []).map((h) => {
+          if (!recipState.ub || !recipState.kMag) return null;
+          phiGroup.updateMatrixWorld(true);
+          const node = phiGroup.localToWorld(
+            mul3(recipState.ub, new THREE.Vector3(h[0], h[1], h[2])).multiplyScalar(recScale()));
+          const centre = new THREE.Vector3(0, -recipState.kMag * recScale(), 0);
+          return node.distanceTo(centre) / (recipState.kMag * recScale());
+        }),
+      };
+    }
+
+    return { setAngles, setDetectorDistance, setShowCircles, setRecip,
+             setSurfaceNormal, resize, debugCounts };
   };
 })();
 
@@ -1526,6 +1966,7 @@ phi 0.000</textarea>
 (function () {
   const container = document.getElementById("viewport");
   const app = window.DiffractometerScene(container);
+  window.__diffApp = app;   // for automated checks
 
   const names = ["mu", "eta", "chi", "phi", "delta", "gamma"];
   const state = { mu: 0, eta: 0, chi: 0, phi: 0, delta: 0, gamma: 0 };
@@ -1581,31 +2022,182 @@ phi 0.000</textarea>
     refreshUI();
   });
 
-  document.getElementById("apply-paste-btn").addEventListener("click", () => {
-    const text = document.getElementById("paste-box").value;
-    const statusEl = document.getElementById("status");
-    const found = {};
-    // Accept "name value", "name: value", "name, value", "name\tvalue" per line;
-    // nu is accepted as an alias for gamma (diffcalc's native name).
-    const lineRe = /([a-zA-Z_]+)[\s,:]+(-?\d+(?:\.\d+)?)/;
-    for (const raw of text.split(/\r?\n/)) {
-      const m = raw.trim().match(lineRe);
-      if (!m) continue;
-      let key = m[1].trim().toLowerCase();
-      if (key === "nu") key = "gamma";
-      if (names.includes(key)) found[key] = parseFloat(m[2]);
+  // --- display toggles ---
+  const showCirclesEl = document.getElementById("show-circles");
+  const showRecipEl = document.getElementById("show-recip");
+  const showCellEl = document.getElementById("show-cell");
+  const recScaleEl = document.getElementById("rec-scale");
+  const recScaleNumEl = document.getElementById("rec-scale-num");
+
+  const showHklCellEl = document.getElementById("show-hkl-cell");
+  const showEwaldEl = document.getElementById("show-ewald");
+  const showDetPatchEl = document.getElementById("show-det-patch");
+  const showAngleCtrlEl = document.getElementById("show-angle-controls");
+  const controlsBelowEl = document.getElementById("controls-below");
+  const detWEl = document.getElementById("det-w");
+  const detHEl = document.getElementById("det-h");
+
+  function refreshRecip() {
+    const cm = parseFloat(recScaleEl.value);
+    document.getElementById("rec-scale-val").textContent = cm.toFixed(1) + " cm";
+    app.setRecip({
+      show: showRecipEl.checked,
+      showCell: showCellEl.checked,
+      showHklCell: showHklCellEl.checked,
+      showEwald: showEwaldEl.checked,
+      showDetPatch: showDetPatchEl.checked,
+      cmPerInvAng: cm,
+      detW: parseFloat(detWEl.value) || 77,
+      detH: parseFloat(detHEl.value) || 77,
+    });
+  }
+
+  // The angle sliders are what a standalone page is driven by, so they start
+  // shown; once a notebook starts pushing angles they are noise, and the first
+  // push hides them - unless the user has already set the checkbox themselves.
+  let angleCtrlTouched = false;
+  showAngleCtrlEl.addEventListener("change", () => { angleCtrlTouched = true; });
+  function refreshAngleControls() {
+    const show = showAngleCtrlEl.checked;
+    for (const id of ["sample-circles-section", "detector-circles-section"]) {
+      document.getElementById(id).style.display = show ? "" : "none";
     }
-    if (Object.keys(found).length === 0) {
-      statusEl.textContent = "No recognizable angle lines found.";
-      return;
-    }
-    Object.assign(state, found);
-    refreshUI();
-    statusEl.textContent = `Applied: ${Object.keys(found).join(", ")}`;
+  }
+
+  function refreshLayout() {
+    document.getElementById("app").classList.toggle("controls-below",
+                                                    controlsBelowEl.checked);
+    setTimeout(() => app.resize(), 0);   // viewport changed shape
+  }
+
+  showCirclesEl.addEventListener("change", () => app.setShowCircles(showCirclesEl.checked));
+  showRecipEl.addEventListener("change", refreshRecip);
+  showCellEl.addEventListener("change", refreshRecip);
+  showHklCellEl.addEventListener("change", refreshRecip);
+  showEwaldEl.addEventListener("change", refreshRecip);
+  showDetPatchEl.addEventListener("change", refreshRecip);
+  detWEl.addEventListener("input", refreshRecip);
+  detHEl.addEventListener("input", refreshRecip);
+  showAngleCtrlEl.addEventListener("change", refreshAngleControls);
+  controlsBelowEl.addEventListener("change", refreshLayout);
+  recScaleEl.addEventListener("input", () => {
+    recScaleNumEl.value = recScaleEl.value;
+    refreshRecip();
   });
+  recScaleNumEl.addEventListener("input", () => {
+    const v = parseFloat(recScaleNumEl.value);
+    if (Number.isNaN(v)) return;
+    recScaleEl.value = Math.max(parseFloat(recScaleEl.min),
+                                Math.min(parseFloat(recScaleEl.max), v));
+    refreshRecip();
+  });
+
+  // --- display settings, for the notebook's store/recall config -------
+  const displayChecks = {
+    showCircles: showCirclesEl, showRecip: showRecipEl, showCell: showCellEl,
+    showHklCell: showHklCellEl, showEwald: showEwaldEl, showDetPatch: showDetPatchEl,
+    showAngleControls: showAngleCtrlEl, controlsBelow: controlsBelowEl,
+  };
+
+  function getDisplay() {
+    const d = {};
+    for (const [key, el] of Object.entries(displayChecks)) d[key] = el.checked;
+    d.recScale = parseFloat(recScaleEl.value);
+    d.tdet = tdet;
+    d.detW = parseFloat(detWEl.value);
+    d.detH = parseFloat(detHEl.value);
+    return d;
+  }
+
+  // Missing keys are left alone, so a partial block only sets what it names.
+  function applyDisplay(d) {
+    for (const [key, el] of Object.entries(displayChecks)) {
+      if (typeof d[key] === "boolean") el.checked = d[key];
+    }
+    if (typeof d.recScale === "number") {
+      recScaleEl.value = d.recScale;
+      recScaleNumEl.value = d.recScale;
+    }
+    if (typeof d.detW === "number") detWEl.value = d.detW;
+    if (typeof d.detH === "number") detHEl.value = d.detH;
+    if (typeof d.tdet === "number") tdet = d.tdet;
+    app.setShowCircles(showCirclesEl.checked);
+    refreshTdet();
+    refreshRecip();
+    refreshAngleControls();
+    refreshLayout();
+  }
+
+  // The notebook cannot read this page, so the page completes the notebook's
+  // config download instead: the link carries the notebook's part of the
+  // config (base64 JSON in data-cfg), and its href is kept rewritten to that
+  // plus the current display settings.
+  function utf8ToB64(s) { return btoa(unescape(encodeURIComponent(s))); }
+  function b64ToUtf8(s) { return decodeURIComponent(escape(atob(s))); }
+
+  function syncDownload(doc) {
+    const a = doc.getElementById("diff3d-config-download");
+    if (!a || !a.dataset.cfg) return;
+    const cfg = JSON.parse(b64ToUtf8(a.dataset.cfg));
+    cfg.display = getDisplay();
+    const href = "data:application/json;base64," + utf8ToB64(JSON.stringify(cfg, null, 2));
+    if (a.getAttribute("href") !== href) a.setAttribute("href", href);
+  }
+
+  // --- state pushed in by the notebook --------------------------------
+  // The page is embedded with <iframe srcdoc>, which inherits the parent
+  // document's origin, so it can simply read a hidden element the notebook
+  // writes into. Polling one string is cheap, needs no custom widget, and
+  // leaves the page fully usable standalone (the read just fails silently).
+  const statusEl = document.getElementById("status");
+  let lastPayload = null;
+
+  function pollParent() {
+    try {
+      const doc = window.parent && window.parent !== window ? window.parent.document : null;
+      if (!doc) return;
+      syncDownload(doc);
+      const el = doc.getElementById("diff3d-payload");
+      if (!el) return;
+      const raw = el.textContent || "";
+      if (!raw || raw === lastPayload) return;
+      if (lastPayload === null && !angleCtrlTouched) {
+        showAngleCtrlEl.checked = false;
+        refreshAngleControls();
+      }
+      lastPayload = raw;
+      const msg = JSON.parse(raw);
+
+      // sent once, by a config load; later pushes omit it so the user's
+      // own toggles are not overwritten
+      if (msg.display) applyDisplay(msg.display);
+      if (msg.angles) {
+        for (const n of names) {
+          if (typeof msg.angles[n] === "number") state[n] = msg.angles[n];
+        }
+        refreshUI();
+      }
+      if (typeof msg.tdet === "number") { tdet = msg.tdet; refreshTdet(); }
+
+      const opts = {};
+      if (typeof msg.kMag === "number") opts.kMag = msg.kMag;
+      if (msg.ub) opts.ub = msg.ub;
+      if (Array.isArray(msg.targets)) opts.targets = msg.targets;
+      if (msg.nPhi) app.setSurfaceNormal(msg.nPhi);
+      if (Object.keys(opts).length) app.setRecip(opts);
+
+      statusEl.textContent = msg.label ? "showing " + msg.label : "";
+    } catch (e) {
+      // standalone, or parent not reachable - stay interactive on our own
+    }
+  }
+  setInterval(pollParent, 150);
 
   refreshUI();
   refreshTdet();
+  refreshRecip();
+  refreshAngleControls();
+  refreshLayout();
 })();
 </script>
 </body>

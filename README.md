@@ -27,7 +27,11 @@ links run the notebook for you and show only the widgets.
   calls, importing its actual calculations from `bernina_prep/`, so they build
   fast and stay easy to diff.
   - `diffraction_reflections.ipynb` — diffractometer angles for a reflection
-    (or a whole table of reflections) using diffcalc's `you` UB geometry.
+    (or a whole table of reflections) using diffcalc's `you` UB geometry,
+    with a live 3D view of the selected solution (k, k′, Q, reciprocal cell,
+    Ewald sphere, detector cut), beamline presets, solution filters and
+    config files to store/recall a setup. Lab directions are entered in
+    **SwissFEL axes** (x horizontal transverse, y up, z along the beam).
     Note: this beamline calls the out-of-plane detector circle **gamma**;
     diffcalc itself calls it `nu` — the apps/library translate automatically.
   - `beam_size_calculator.ipynb` — infers focus waist/Rayleigh range from a

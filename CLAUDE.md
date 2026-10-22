@@ -75,7 +75,7 @@ default) so a failing panel shows its error instead of a blank page. Leave it.
 
 ## Driving an embedded page from python
 
-`apps/dev/diffractometer_3d.html` is a self-contained three.js page embedded via
+`apps/diffractometer_3d.html` is a self-contained three.js page embedded via
 `<iframe srcdoc>`. A `srcdoc` iframe inherits the parent document's origin, so
 the page can simply **read a hidden element the notebook writes into**
 (`#diff3d-payload`, polled every 150 ms) — no custom widget, no `postMessage`
@@ -116,11 +116,13 @@ a row of `Button`s acting as column headers.
   of an orientation line is not.
 
   `build_ubcalc(..., frame=...)` takes `"swissfel"` or `"diffcalc"`. The default
-  is **`"diffcalc"`** so old callers keep their exact meaning; `apps/dev`
-  passes `frame="swissfel"` and the stable `apps/diffraction_reflections.ipynb`
-  still uses diffcalc axes. Whenever an app is converted, translate its default
-  orientations too rather than leaving the numbers and silently changing what
-  they mean — the check is that UB comes out identical.
+  is **`"diffcalc"`** so old callers keep their exact meaning; the apps pass
+  `frame="swissfel"` (`apps/diffraction_reflections.ipynb` since its promotion
+  from `apps/dev` on 2026-10-22). Whenever an app is converted, translate its
+  default orientations too rather than leaving the numbers and silently
+  changing what they mean — the check is that UB comes out identical (it did:
+  diffcalc `(1,1,1) > (0,0,1)`, `(1,1,-1) > (1,0,0)` = SwissFEL
+  `(1,1,1) > (1,0,0)`, `(1,1,-1) > (0,1,0)`, bit-identical UB).
 
   The 3D scene is built on diffcalc axes with only the on-screen axis arrows
   and labels relabelled to SwissFEL, which is why it already looked right
