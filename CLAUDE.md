@@ -82,6 +82,13 @@ the page can simply **read a hidden element the notebook writes into**
 plumbing, and the page stays fully usable standalone because the read just
 fails silently. Every push includes a changing counter so repeats are ignored.
 
+The reverse direction works the same way: python cannot read the page, so to
+save the page's own display settings the page **writes into the parent DOM**.
+The config download link carries python's part of the config
+(`#diff3d-config-download`, base64 JSON in `data-cfg`) and the page keeps its
+`href` rewritten with the current `display` block. On load, `display` rides on
+exactly one push so later pushes do not reset the user's toggles.
+
 Clicking a pandas DataFrame's rows is browser text selection and **cannot**
 reach python. To make solutions selectable, the table is rendered as HTML with
 a row of `Button`s acting as column headers.
