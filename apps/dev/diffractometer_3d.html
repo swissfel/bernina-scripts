@@ -2059,6 +2059,58 @@
     refreshRecip();
   });
 
+  // --- display settings, for the notebook's store/recall config -------
+  const displayChecks = {
+    showCircles: showCirclesEl, showRecip: showRecipEl, showCell: showCellEl,
+    showHklCell: showHklCellEl, showEwald: showEwaldEl, showDetPatch: showDetPatchEl,
+    showAngleControls: showAngleCtrlEl, controlsBelow: controlsBelowEl,
+  };
+
+  function getDisplay() {
+    const d = {};
+    for (const [key, el] of Object.entries(displayChecks)) d[key] = el.checked;
+    d.recScale = parseFloat(recScaleEl.value);
+    d.tdet = tdet;
+    d.detW = parseFloat(detWEl.value);
+    d.detH = parseFloat(detHEl.value);
+    return d;
+  }
+
+  // Missing keys are left alone, so a partial block only sets what it names.
+  function applyDisplay(d) {
+    for (const [key, el] of Object.entries(displayChecks)) {
+      if (typeof d[key] === "boolean") el.checked = d[key];
+    }
+    if (typeof d.recScale === "number") {
+      recScaleEl.value = d.recScale;
+      recScaleNumEl.value = d.recScale;
+    }
+    if (typeof d.detW === "number") detWEl.value = d.detW;
+    if (typeof d.detH === "number") detHEl.value = d.detH;
+    if (typeof d.tdet === "number") tdet = d.tdet;
+    app.setShowCircles(showCirclesEl.checked);
+    refreshTdet();
+    refreshRecip();
+    refreshAngleControls();
+    refreshLayout();
+  }
+
+  // The notebook cannot read this page, so the page completes the notebook's
+  // config download instead: the link carries the notebook's part of the
+  // config (base64 JSON in data-cfg), and its href is kept rewritten to that
+  // plus the current display settings.
+  function utf8ToB64(s) { return btoa(unescape(encodeURIComponent(s))); }
+  function b64ToUtf8(s) { return decodeURIComponent(escape(atob(s))); }
+
+  function syncDownload(doc) {
+    const a = doc.getElementById("diff3d-config-download");
+    if (!a || !a.dataset.cfg) return;
+    const cfg = JSON.parse(b64ToUtf8(a.dataset.cfg));
+    cfg.display = getDisplay();
+    const href = "data:application/json;base64," + utf8ToB64(JSON.stringify(cfg, null, 2));
+    if (a.getAttribute("href") !== href) a.setAttribute("href", href);
+  }
+
   // --- state pushed in by the notebook --------------------------------
   // The page is embedded with <iframe srcdoc>, which inherits the parent
   // document's origin, so it can simply read a hidden element the notebook
@@ -2070,13 +2122,18 @@
   function pollParent() {
     try {
       const doc = window.parent && window.parent !== window ? window.parent.document : null;
-      const el = doc ? doc.getElementById("diff3d-payload") : null;
+      if (!doc) return;
+      syncDownload(doc);
+      const el = doc.getElementById("diff3d-payload");
       if (!el) return;
       const raw = el.textContent || "";
       if (!raw || raw === lastPayload) return;
       lastPayload = raw;
       const msg = JSON.parse(raw);
 
+      // sent once, by a config load; later pushes omit it so the user's
+      // own toggles are not overwritten
+      if (msg.display) applyDisplay(msg.display);
       if (msg.angles) {
         for (const n of names) {
           if (typeof msg.angles[n] === "number") state[n] = msg.angles[n];
