@@ -2171,6 +2171,15 @@
       // sent once, by a config load; later pushes omit it so the user's
       // own toggles are not overwritten
       if (msg.display) applyDisplay(msg.display);
+      // the notebook sizes the view without rebuilding the iframe (which would
+      // reset the camera): a srcdoc frame may restyle its own frame element
+      if (typeof msg.frameHeight === "number" && window.frameElement) {
+        const h = msg.frameHeight + "px";
+        if (window.frameElement.style.height !== h) {
+          window.frameElement.style.height = h;
+          setTimeout(() => app.resize(), 0);
+        }
+      }
       if (msg.angles) {
         for (const n of names) {
           if (typeof msg.angles[n] === "number") state[n] = msg.angles[n];
