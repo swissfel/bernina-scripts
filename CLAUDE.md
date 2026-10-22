@@ -118,6 +118,12 @@ a row of `Button`s acting as column headers.
   The 3D scene is built on diffcalc axes with only the on-screen axis arrows
   and labels relabelled to SwissFEL, which is why it already looked right
   before the inputs were converted.
+- **The surface normal sets two diffcalc vectors**, `n_hkl` (reference:
+  alpha, beta, psi, naz) and `surf_nhkl` (surface: betain, betaout).
+  `build_ubcalc` sets both from the one box. Setting only `n_hkl` left
+  `surf_nhkl` at diffcalc's default (phi-frame z), which made betain/betaout
+  unrelated to the sample — sign-flipped where the real normal lands on −z.
+  Check: betain == alpha and betaout == beta for every branch.
 - **diffcalc-core's `UB` uses the 2π convention**: `|a*| = 2π/a` and
   `|UB @ (h,k,l)| = 2π/d`. Anything drawn alongside it (k, k′, Q) must use
   `|k| = 2π/λ` or Q will not land on a reciprocal lattice node. `k_magnitude()`

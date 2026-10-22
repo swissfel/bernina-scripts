@@ -113,7 +113,11 @@ def build_ubcalc(
     )
     for hkl, xyz in parse_orientations(orientations, frame=frame):
         ubcalc.add_orientation(hkl, xyz, None, None)
+    # diffcalc keeps two separate vectors: the reference (n_hkl), behind
+    # alpha/beta/psi, and the surface (surf_nhkl), behind betain/betaout. Left
+    # unset, the surface one defaults to phi-frame z, unrelated to the sample.
     ubcalc.n_hkl = parse_vector(surface_normal)
+    ubcalc.surf_nhkl = parse_vector(surface_normal)
     ubcalc.calc_ub()
     return ubcalc
 
