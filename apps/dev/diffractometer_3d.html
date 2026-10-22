@@ -1803,6 +1803,27 @@
         }
       }
 
+      // Target reflections (two-reflection mode): a node at UB.h, hung in the
+      // sample frame so it turns with the circles, plus a thin line from the
+      // Ewald sphere's centre to it - that line is the node's own k', and it
+      // is |k| long exactly when the node sits on the sphere.
+      if (recipState.targets && recipState.targets.length && recipState.ub && recipState.kMag) {
+        const css = ["#0a8f6a", "#b5179e"];
+        const hex = [0x0a8f6a, 0xb5179e];
+        phiGroup.updateMatrixWorld(true);
+        recipState.targets.forEach((h, i) => {
+          const node = mul3(recipState.ub, new THREE.Vector3(h[0], h[1], h[2])).multiplyScalar(s);
+          const dot = new THREE.Mesh(new THREE.SphereGeometry(Math.max(len * 0.025, 0.04), 16, 12),
+                                     new THREE.MeshBasicMaterial({ color: hex[i % 2] }));
+          dot.position.copy(node);
+          cellGroup.add(dot);
+          cellGroup.add(labelAt("(" + h.map((v) => Math.round(v * 100) / 100).join(" ") + ")",
+                                node, css[i % 2], new THREE.Vector3(0.2, 0.2, 0)));
+          const world = phiGroup.localToWorld(node.clone());
+          recipGroup.add(thinLine(kStart, world, hex[i % 2]));
+        });
+      }
+
       if ((recipState.showCell || (recipState.showHklCell && lastMeasuredHkl)) && recipState.ub) {
         const U = recipState.ub;   // columns are a*, b*, c* in the phi frame
         const col = (j) => new THREE.Vector3(U[0][j], U[1][j], U[2][j]).multiplyScalar(s);
@@ -1923,6 +1944,15 @@
           ? { width_along_SF_x: lastDetectorMesh.geometry.parameters.depth,
               height_along_SF_y: lastDetectorMesh.geometry.parameters.width } : null,
         arcSweeps: Object.keys(circles).reduce((o, n) => (o[n] = circles[n].angle, o), {}),
+        // |node - Ewald centre| / |k| per target: exactly 1 in Bragg condition
+        targetsOnSphere: (recipState.targets || []).map((h) => {
+          if (!recipState.ub || !recipState.kMag) return null;
+          phiGroup.updateMatrixWorld(true);
+          const node = phiGroup.localToWorld(
+            mul3(recipState.ub, new THREE.Vector3(h[0], h[1], h[2])).multiplyScalar(recScale()));
+          const centre = new THREE.Vector3(0, -recipState.kMag * recScale(), 0);
+          return node.distanceTo(centre) / (recipState.kMag * recScale());
+        }),
       };
     }
 
@@ -2145,6 +2175,7 @@
       const opts = {};
       if (typeof msg.kMag === "number") opts.kMag = msg.kMag;
       if (msg.ub) opts.ub = msg.ub;
+      if (Array.isArray(msg.targets)) opts.targets = msg.targets;
       if (msg.nPhi) app.setSurfaceNormal(msg.nPhi);
       if (Object.keys(opts).length) app.setRecip(opts);
 
