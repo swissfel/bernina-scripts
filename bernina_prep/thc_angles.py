@@ -246,6 +246,39 @@ def load_otti_envelope(npy_path):
 
 
 # ---------------------------------------------------------------------------
+# a check usable by the reflections app
+# ---------------------------------------------------------------------------
+
+APERTURES = {
+    "in-vacuum detector": invac_envelope,
+    "Be window": window_envelope,
+}
+
+
+def aperture_check(kind, beta_deg=0.0):
+    """``(gamma, delta) -> bool``: whether a reflection's detector angles fall
+    inside the accessible envelope of ``kind`` (a key of ``APERTURES``) at
+    flange rotation ``beta_deg``.
+
+    The envelopes are over azimuth gamma 0..180 and elevation delta; a
+    direction with gamma < 0 is the same as (gamma + 180, 180 - delta). Otti
+    is not offered: its precomputed envelope is a single boundary curve.
+    """
+    gamma, dmin, dmax = APERTURES[kind](beta_deg)
+    lo, hi = np.fmin(dmin, dmax), np.fmax(dmin, dmax)
+
+    def check(g, d):
+        g, d = float(g), float(d)
+        g = ((g + 180.0) % 360.0) - 180.0
+        if g < 0:
+            g, d = g + 180.0, 180.0 - d
+        a, b = np.interp(g, gamma, lo, left=np.nan, right=np.nan), np.interp(g, gamma, hi, left=np.nan, right=np.nan)
+        return bool(np.isfinite(a) and np.isfinite(b) and a <= d <= b)
+
+    return check
+
+
+# ---------------------------------------------------------------------------
 # interactive app
 # ---------------------------------------------------------------------------
 
@@ -259,7 +292,10 @@ class ThcAnglesApp:
     sample (top row) and the resulting accessible (gamma, delta) envelope
     (bottom row, solid curve = current rotation, dashed = widest envelope
     over all rotations). The first two columns are rotatable via sliders;
-    Otti's envelope is precomputed (``data/otti.npy``) and shown as-is.
+    Otti's envelope comes from the original app (``data/otti.npy``), and
+    the Otti panel below (``bernina_prep.otti``) shows where its detector
+    looks for given arm rotations: top view and footprint in this grid,
+    and a sky map with its own controls.
     """
 
     def __init__(self, otti_npy: str | Path | None = None):
@@ -282,11 +318,15 @@ class ThcAnglesApp:
         self._draw_invac(0.0)
         self._draw_window(0.0)
         self._draw_static()
+        from bernina_prep.otti import OttiPanel
+        self.otti = OttiPanel(self.otti_npy, ax_top=self.ax[0][2], ax_gd=self.ax[1][2],
+                              on_change=self.canvas.draw_idle)
+        self.ax[1][2].legend(frameon=False, loc="upper center")
 
         col_window = widgets.VBox([widgets.Label("Be window flange rotation"), self.slider_window])
         col_invac = widgets.VBox([widgets.Label("In-vacuum detector rotation"), self.slider_invac])
         controls = widgets.HBox([col_window, col_invac], layout=widgets.Layout(justify_content="center"))
-        self.ui = widgets.VBox([self.canvas, controls])
+        self.ui = widgets.VBox([self.canvas, controls, self.otti.ui])
 
     def _setup_axes(self):
         titles = ["In-vacuum detector", "Be window", "Otti (motorized in-vacuum)"]
@@ -355,11 +395,6 @@ class ThcAnglesApp:
         self.ax[1][1].plot(g_fw, dmin_fw, color="royalblue", linestyle=(5, (4, 4)))
         self.ax[1][1].plot(g_fw, dmax_fw, color="royalblue", linestyle=(5, (4, 4)))
 
-        self.ax[0][2].axis("off")
-        self.ax[0][2].text(
-            0.5, 0.5, "geometry is CAD-derived,\nnot parametrized here",
-            ha="center", va="center", fontsize=9, wrap=True, transform=self.ax[0][2].transAxes,
-        )
         if self.otti_npy and self.otti_npy.exists():
             g1, d1, g2, d2 = load_otti_envelope(self.otti_npy)
             self.ax[1][2].plot(g1, d1, color="darkorange", label="Accessible diffraction angles")

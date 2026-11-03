@@ -38,8 +38,14 @@ dependencies:
   - voila
   - pip
   - pip:
-    # diffractometer angle solving (bernina_prep.diffraction)
-    - diffcalc-core
+    # diffractometer angle solving (bernina_prep.diffraction), the same
+    # library eco's recspace uses on the beamline
+    - hklforge>=0.0.1
+    # optional extras of the reflections app, each a plain wheel that leaves
+    # the Jupyter stack alone: space groups, CIF and structure factors (gemmi),
+    # X-ray optical constants for grazing incidence (xraydb)
+    - gemmi
+    - xraydb
 
 # The repo's own package (so apps/ can `import bernina_prep`) is installed by
 # binder/postBuild instead of with a "-e ." entry here: pip resolves such a path

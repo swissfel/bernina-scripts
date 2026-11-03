@@ -1,0 +1,107 @@
+{
+  "_comment": "Bernina diffractometer setups: held constraints and solution ranges (min/max a solution may have, on top of the motor limits). Same names and format as eco's RecSpace.set_constraints (eco.utilities.recspace_hklforge.CONSTRAINT_PRESETS); converted from the former apps/bernina_parameters/*.json, whose ranges on held angles were redundant (and HGeom's chi 0..0 contradicted chi = 90).",
+  "sd": {
+    "description": "SD: surface diffractometer (You-B), phi axis horizontal (x-)",
+    "constraints": {
+      "mu": 0.0,
+      "eta": 0.0,
+      "chi": 0.0
+    },
+    "ranges": {
+      "gamma": [
+        -150.0,
+        10.0
+      ],
+      "delta": [
+        -10.0,
+        120.0
+      ]
+    }
+  },
+  "sd_horizontal": {
+    "description": "SD: surface diffractometer (You-B), chi = 90: phi axis vertical (y-)",
+    "constraints": {
+      "mu": 0.0,
+      "eta": 0.0,
+      "chi": 90.0
+    },
+    "ranges": {
+      "gamma": [
+        -150.0,
+        10.0
+      ],
+      "delta": [
+        -10.0,
+        120.0
+      ]
+    }
+  },
+  "sd_vertical_elbow_down": {
+    "description": "SD: surface diffractometer (You-B), eta = -90 (elbow down), phi axis horizontal (x-)",
+    "constraints": {
+      "mu": 0.0,
+      "eta": -90.0,
+      "chi": 0.0
+    },
+    "ranges": {
+      "gamma": [
+        -150.0,
+        10.0
+      ],
+      "delta": [
+        -10.0,
+        120.0
+      ]
+    }
+  },
+  "sd_vertical_elbow_up": {
+    "description": "SD: surface diffractometer (You-B), eta = +90 (elbow up), phi axis horizontal (x-)",
+    "constraints": {
+      "mu": 0.0,
+      "eta": 90.0,
+      "chi": 0.0
+    },
+    "ranges": {
+      "gamma": [
+        -150.0,
+        10.0
+      ],
+      "delta": [
+        -10.0,
+        120.0
+      ]
+    }
+  },
+  "gic": {
+    "description": "GIC chamber, phi axis horizontal (x-)",
+    "constraints": {
+      "mu": 0.0,
+      "eta": 0.0,
+      "chi": 0.0
+    },
+    "ranges": {
+      "gamma": [
+        -150.0,
+        10.0
+      ],
+      "delta": [
+        -10.0,
+        120.0
+      ]
+    }
+  },
+  "thc": {
+    "description": "THC chamber, chi = 90 and phi = 0, eta free",
+    "constraints": {
+      "mu": 0.0,
+      "chi": 90.0,
+      "phi": 0.0
+    },
+    "ranges": {
+      "delta": [
+        45.0,
+        122.0
+      ]
+    }
+  }
+}

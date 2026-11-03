@@ -1,317 +1,592 @@
-"""Diffraction-angle calculations for Bernina's diffcalc 'you' geometry.
+"""Diffractometer angles for Bernina's You (1999) six-circle geometry, on hklforge.
 
-Angle-name convention: diffcalc's internal name for the out-of-plane detector
-circle is ``nu``; Bernina's beamline convention calls this circle ``gamma``.
-Every public function here accepts/returns ``gam``/``gamma``, translating
-to/from diffcalc's ``nu`` internally so callers never need to know about it.
+The same calculation eco's ``RecSpace`` does on the beamline
+(``eco/utilities/recspace_calc.py``), without eco, so it runs on Binder:
+hklforge solves the angles; the UB from orientations is computed here.
+
+Conventions (identical to eco's recspace):
+
+- **Lab frame**: SwissFEL/Bernina axes, z+ along the beam, y+ up,
+  x+ = y x z (left, looking along the beam). Everything a user types or reads
+  is in this frame; there is no second (diffcalc) frame any more.
+- **Circles**: mu, eta, chi, phi (sample), gamma, delta (detector). gamma is
+  the out-of-plane detector circle diffcalc calls ``nu``.
+- **UB** maps (h, k, l) to Q in the phi frame (the lab frame with all angles
+  at 0), 2 pi convention: abs(UB h) = 2 pi / d, abs(k) = 2 pi / lambda.
+- **Orientations** ``(h, k, l) > (x, y, z)``: that crystal direction points
+  along that lab direction with all angles at 0. Two fix U, one fixes it up
+  to a rotation about that direction.
+- **Surface normal** (behind betain, betaout, bin_eq_bout) and **reference
+  vector** (behind alpha, beta, psi, naz, tau) are separate (h, k, l)
+  directions. The surface normal is optional; the reference defaults to
+  (1 0 0), as in eco and diffcalc. alpha/beta are angles to the *reference*,
+  betain/betaout to the *surface*.
+- **Two reflections**: the ``h2`` constraint keeps a second reflection in
+  Bragg condition; ``detector`` says where the detector goes then:
+  ``"h1"`` on the first (requested) reflection, ``"between"`` halfway
+  between both outgoing beams.
 """
 from __future__ import annotations
 
-import ast
+import re
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-from diffcalc.hkl.calc import HklCalculation
-from diffcalc.hkl.constraints import Constraints
-from diffcalc.hkl.geometry import Position, get_rotation_matrices
-from diffcalc.ub.calc import UBCalculation
-from scipy import constants as _const
+from hklforge import Degenerate, Diffractometer, Geometry
+from hklforge import plan as _hkl_plan
+from hklforge.geometry import HC_EV_ANGSTROM, Circle, wavevector
+from hklforge.lattice import b_matrix
+from hklforge.virtual import virtual_angles
+
+CIRCLES = ("gamma", "delta", "mu", "eta", "chi", "phi")          # table and input order
+SAMPLE_CIRCLES = ("mu", "eta", "chi", "phi")
+VIRTUAL_CONSTRAINTS = ("qaz", "naz", "alpha", "beta", "psi", "betain", "betaout", "omega")
+BOOL_CONSTRAINTS = ("a_eq_b", "bin_eq_bout", "bisect")
+CONSTRAINTS = CIRCLES + VIRTUAL_CONSTRAINTS + BOOL_CONSTRAINTS
+SURFACE_CONSTRAINTS = ("betain", "betaout", "bin_eq_bout")
+DETECTOR_POLICIES = {"h1": "detector on reflection 1", "between": "detector between both"}
+ROW_ORDER = CIRCLES + ("theta", "ttheta", "qaz", "naz", "alpha", "beta", "psi", "tau",
+                       "betain", "betaout", "omega")
+# names in configs written by the diffcalc version of the app
+LEGACY_NAMES = {"gam": "gamma", "nu": "gamma"}
+UNSUPPORTED = ("mu_is_gam",)
+
+DEFAULT_REFERENCE = (1.0, 0.0, 0.0)
+SMALL = 1e-4
+
+# --- the geometry ----------------------------------------------------------------
+
+# You's frame (hklforge's builtin psic, diffcalc's): beam y+, up x+
+_YOU_BEAM, _YOU_UP = (0.0, 1.0, 0.0), (1.0, 0.0, 0.0)
+BEAM, UP = (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)
+
+
+def _triad(b, u):
+    b, u = np.asarray(b, float), np.asarray(u, float)
+    return np.column_stack([b, u, np.cross(b, u)])
+
+
+YOU_TO_LAB = _triad(BEAM, UP) @ _triad(_YOU_BEAM, _YOU_UP).T
+
+
+def _turn(v) -> tuple:
+    return tuple(float(x) + 0.0 for x in np.round(YOU_TO_LAB @ np.asarray(v, float), 15))
+
+
+def _bernina_geometry() -> Geometry:
+    # newer hklforge has psic.reframed(beam="z+", up="y+"); by hand so that
+    # the released 0.0.1 is enough
+    psic = Geometry.builtin("psic")
+    return Geometry(
+        name="bernina_you",
+        sample=[Circle(c.name, _turn(c.axis)) for c in psic.sample],
+        detector=[Circle("gamma" if c.name == "nu" else c.name, _turn(c.axis)) for c in psic.detector],
+        beam=_turn(psic.beam),
+        description="psic (You 1999) in the Bernina frame (beam z+, up y+), gamma = diffcalc's nu",
+        labels={"x": "transverse", "y": "vertical", "z": "beam"},
+        azimuth_zero=_turn(psic.azimuth_zero),
+        bisect_circle=psic.bisect_circle,
+    )
+
+
+GEOMETRY = _bernina_geometry()
+
+
+def to_you(a) -> np.ndarray:
+    """A lab-frame vector or matrix in You's frame (what the 3D view is built on)."""
+    return YOU_TO_LAB.T @ np.asarray(a, float)
 
 
 def en2lam(energy_eV):
-    """Photon energy in eV -> wavelength in angstrom.
-
-    Same expression (and operation order, so bit-identical results) as
-    xrayutilities.utilities.en2lam, inlined so the Binder image does not need
-    xrayutilities for this one conversion.
-    """
-    return _const.h * _const.speed_of_light / (_const.e * energy_eV) * 1e10
-
-# Order matches diffcalc's internal constraint names; 'nu' is exposed to
-# callers/UI as 'gam' per the beamline's gamma convention.
-CONSTRAINT_NAMES = [
-    "delta", "nu", "qaz", "naz", "alpha", "beta", "psi", "a_eq_b",
-    "mu", "eta", "chi", "phi", "mu_is_gam",
-]
-UI_NAMES = [n if n != "nu" else "gam" for n in CONSTRAINT_NAMES]
+    """Photon energy in eV -> wavelength in angstrom."""
+    return HC_EV_ANGSTROM / energy_eV
 
 
-def parse_vector(text: str) -> tuple:
-    """Safely parse a '(h,k,l)'-style string into a tuple of numbers."""
-    value = ast.literal_eval(text.strip())
-    return tuple(value)
+def k_magnitude(energy: float) -> float:
+    """abs(k) = 2 pi / lambda in 1/angstrom (the convention of UB)."""
+    return wavevector(energy)
 
 
-# --- lab frame conventions ---------------------------------------------------
-#
-# diffcalc and the beamline label the same right-handed lab frame differently:
-#
-#     diffcalc  +x  +y  +z
-#     SwissFEL  +y  +z  +x
-#
-# i.e. diffcalc x is SwissFEL y (vertical), diffcalc y is SwissFEL z (beam) and
-# diffcalc z is SwissFEL x (horizontal transverse). It is a cyclic relabelling,
-# so it is a pure rotation (determinant +1) - no handedness change.
-#
-# Anything a user types or reads should be SwissFEL; diffcalc only ever sees
-# its own axes. This applies to LAB-FRAME directions only: hkl values are
-# reciprocal-lattice indices and carry no lab frame at all, so they are never
-# converted.
-
-def swissfel_to_diffcalc(v) -> tuple:
-    """(x, y, z) in SwissFEL lab axes -> the same direction in diffcalc's."""
-    x, y, z = v
-    return (y, z, x)
+# --- parsing ---------------------------------------------------------------------
 
 
-def diffcalc_to_swissfel(v) -> tuple:
-    """(x, y, z) in diffcalc lab axes -> the same direction in SwissFEL's."""
-    x, y, z = v
-    return (z, x, y)
+def parse_vector(text) -> tuple:
+    """Three numbers as people write them: "(1,1,1)", "1 1 1", "[1, -1, 0]",
+    "(001)", "1-10" (one digit each)."""
+    t = str(text).strip().strip("()[]{} ").strip()
+    parts = [x for x in re.split(r"[,\s;]+", t) if x]
+    if len(parts) == 1 and re.fullmatch(r"(-?\d){3}", t):
+        parts = re.findall(r"-?\d", t)
+    if len(parts) != 3:
+        raise ValueError(f"{text!r}: give three numbers, e.g. (1,0,0)")
+    return tuple(float(x) for x in parts)
 
 
-def parse_orientations(specs: list[str], frame: str = "diffcalc") -> list[tuple[tuple, tuple]]:
-    """Parse ['(1,1,1) > (0,0,1)', ...] into [(hkl, xyz), ...].
+_LAB_WORDS = {"beam": BEAM, "up": UP, "down": (0.0, -1.0, 0.0),
+              "x+": (1.0, 0.0, 0.0), "x-": (-1.0, 0.0, 0.0), "y+": UP, "y-": (0.0, -1.0, 0.0),
+              "z+": BEAM, "z-": (0.0, 0.0, -1.0)}
 
-    ``frame`` says which lab axes the xyz half is written in. With
-    ``"swissfel"`` the direction is converted to diffcalc's axes on the way in;
-    the hkl half is never touched. Default stays ``"diffcalc"`` so existing
-    callers keep their exact meaning - pass the frame explicitly.
-    """
-    if frame not in ("diffcalc", "swissfel"):
-        raise ValueError(f"unknown frame {frame!r}; use 'diffcalc' or 'swissfel'")
-    parsed = []
+
+def parse_direction(text) -> tuple:
+    """A lab direction: three numbers or a word (beam, up, down, x+, z-, ...)."""
+    word = str(text).strip().lower()
+    if word in _LAB_WORDS:
+        return _LAB_WORDS[word]
+    return parse_vector(text)
+
+
+def parse_orientations(specs) -> list[tuple[tuple, tuple]]:
+    """['(1,1,1) > (1,0,0)', '(0,0,1) > beam', ...] -> [(hkl, xyz), ...];
+    blank lines and lines without '>' are skipped."""
+    out = []
     for spec in specs:
         if ">" not in spec:
             continue
         hkl_s, xyz_s = spec.split(">", 1)
-        xyz = parse_vector(xyz_s)
-        if frame == "swissfel":
-            xyz = swissfel_to_diffcalc(xyz)
-        parsed.append((parse_vector(hkl_s), xyz))
-    return parsed
+        out.append((parse_vector(hkl_s), parse_direction(xyz_s)))
+    return out
 
 
-def build_ubcalc(
-    lat_name: str,
-    uc_a: float, uc_b: float, uc_c: float,
-    uc_alpha: float, uc_beta: float, uc_gamma: float,
-    orientations: list[str],
-    surface_normal: str,
-    frame: str = "diffcalc",
-) -> UBCalculation:
-    """Build and solve a diffcalc UBCalculation in the 'you' geometry.
+# --- UB from orientations ----------------------------------------------------------
 
-    ``frame`` is the lab frame the orientation xyz directions are written in
-    ("swissfel" or "diffcalc"). ``surface_normal`` is an (h,k,l), i.e. a
-    reciprocal-lattice direction, so it is frame-independent.
+
+def _skew(a):
+    return np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
+
+
+def _u_from_two(B, h1, v1, h2, v2):
+    """Busing & Levy: the first pair exactly, the second in the plane it
+    spans with the first (diffcalc's ``_calc_ub_from_two_references``)."""
+    def triple(a, b):
+        t3 = np.cross(a, b)
+        cols = []
+        for t in (a, np.cross(t3, a), t3):
+            n = np.linalg.norm(t)
+            if n < SMALL:
+                raise ValueError("the two orientations are parallel; give two different directions")
+            cols.append(t / n)
+        return np.column_stack(cols)
+
+    return triple(np.asarray(v1, float), np.asarray(v2, float)) @ np.linalg.inv(
+        triple(B @ np.asarray(h1, float), B @ np.asarray(h2, float)))
+
+
+def _u_from_one(B, h, v):
+    """The smallest rotation from U = 1 taking B h onto v."""
+    a = B @ np.asarray(h, float)
+    a, v = a / np.linalg.norm(a), np.asarray(v, float) / np.linalg.norm(v)
+    axis, c = np.cross(a, v), float(a @ v)
+    s = np.linalg.norm(axis)
+    if s < 1e-12:
+        if c > 0:
+            return np.eye(3)
+        p = np.cross(a, [1.0, 0, 0] if abs(a[0]) < 0.9 else [0, 1.0, 0])
+        K = _skew(p / np.linalg.norm(p))
+        return np.eye(3) + 2 * K @ K          # 180 degrees about p
+    K = _skew(axis / s)
+    return np.eye(3) + s * K + (1 - c) * K @ K
+
+
+@dataclass
+class Sample:
+    """A crystal mounted on the diffractometer.
+
+    ``cell`` = dict(a, b, c, alpha, beta, gamma) in angstrom and degrees;
+    ``orientations`` = [(hkl, lab xyz), ...] at all angles 0 (the first two
+    are used); ``surface`` and ``reference`` are (h, k, l) or None.
     """
-    ubcalc = UBCalculation("you")
-    ubcalc.set_lattice(
-        lat_name, a=uc_a, b=uc_b, c=uc_c,
-        alpha=uc_alpha, beta=uc_beta, gamma=uc_gamma,
-    )
-    for hkl, xyz in parse_orientations(orientations, frame=frame):
-        ubcalc.add_orientation(hkl, xyz, None, None)
-    # diffcalc keeps two separate vectors: the reference (n_hkl), behind
-    # alpha/beta/psi, and the surface (surf_nhkl), behind betain/betaout. Left
-    # unset, the surface one defaults to phi-frame z, unrelated to the sample.
-    ubcalc.n_hkl = parse_vector(surface_normal)
-    ubcalc.surf_nhkl = parse_vector(surface_normal)
-    ubcalc.calc_ub()
-    return ubcalc
+    cell: dict
+    orientations: list
+    surface: tuple | None = None
+    reference: tuple | None = DEFAULT_REFERENCE
+    B: np.ndarray = field(init=False, repr=False)
+    U: np.ndarray = field(init=False, repr=False)
 
+    def __post_init__(self):
+        c = self.cell
+        self.B = b_matrix(*(float(c[k]) for k in ("a", "b", "c", "alpha", "beta", "gamma")))
+        if not self.orientations:
+            raise ValueError('no orientation: give at least one line "(h,k,l) > (x,y,z)"')
+        (h1, v1), *rest = self.orientations
+        self.U = _u_from_two(self.B, h1, v1, *rest[0]) if rest else _u_from_one(self.B, h1, v1)
 
-def make_constraints(fixed: dict) -> Constraints:
-    """Build diffcalc Constraints from a {ui_name: value} mapping of the
-    constraints the caller wants fixed (``gam`` is translated to ``nu``)."""
-    translated = {("nu" if name == "gam" else name): value for name, value in fixed.items()}
-    return Constraints(translated)
+    @classmethod
+    def from_text(cls, cell: dict, orientations: str, surface: str = "", reference: str = "(1,0,0)"):
+        """From the app's text fields; an empty surface/reference means none."""
+        lines = [ln.strip() for ln in str(orientations).splitlines() if ln.strip()]
+        surf = parse_vector(surface) if str(surface).strip() else None
+        ref = parse_vector(reference) if str(reference).strip() else None
+        return cls(dict(cell), parse_orientations(lines), surf, ref)
 
+    @property
+    def UB(self) -> np.ndarray:
+        return self.U @ self.B
 
-def solve_hkl_positions(ubcalc: UBCalculation, cons: Constraints, h, k, l, energy: float):
-    """Solve one (h,k,l) reflection, returning diffcalc's raw
-    [(Position, extra_dict), ...] solution branches (angles in degrees)."""
-    lam = en2lam(energy)
-    hklcalc = HklCalculation(ubcalc, cons)
-    return hklcalc.get_position(h, k, l, lam)
+    def _phi(self, hkl):
+        if hkl is None:
+            return None
+        v = self.UB @ np.asarray(hkl, float)
+        return v / np.linalg.norm(v)
 
+    @property
+    def n_surface(self):
+        """Unit surface normal in the phi frame, or None."""
+        return self._phi(self.surface)
 
-def solve_hkl(ubcalc: UBCalculation, cons: Constraints, h, k, l, energy: float) -> pd.DataFrame:
-    """Solve one (h,k,l) reflection.
+    @property
+    def n_reference(self):
+        return self._phi(self.reference)
 
-    Returns a DataFrame with one column per solution branch ('sol. 0', ...)
-    and angle names as rows (``nu`` renamed to ``gamma``).
-    """
-    result = solve_hkl_positions(ubcalc, cons, h, k, l, energy)
-    df = pd.concat(
-        [
-            pd.DataFrame.from_dict({**pos.asdict, **extra}, orient="index", columns=[f"sol. {n}"])
-            for n, (pos, extra) in enumerate(result)
-        ],
-        axis=1,
-    )
-    df.rename(index={"nu": "gamma"}, inplace=True)
-    return df
+    def d_spacing(self, hkl) -> float:
+        return 2 * np.pi / np.linalg.norm(self.B @ np.asarray(hkl, float))
 
+    # --- forward calculations ---
 
-def reflection_table(
-    ubcalc: UBCalculation,
-    cons: Constraints,
-    reflections: list[tuple],
-    energy: float,
-    solution: int = 0,
-) -> pd.DataFrame:
-    """Compute one row per (h,k,l) in ``reflections`` under the same fixed
-    constraints, picking solution branch ``solution`` (0 = first available)
-    when several exist. Reflections diffcalc can't solve get an 'error'
-    message and NaN angles instead of raising, so a whole batch never fails
-    because of one bad index.
-    """
-    rows = []
-    for h, k, l in reflections:
+    def hkl_at(self, angles: dict, energy: float) -> np.ndarray:
+        """(h, k, l) in Bragg condition at these angles."""
+        return np.linalg.solve(self.UB, GEOMETRY.q_phi(_complete(angles), wavevector(energy)))
+
+    def pseudo_angles(self, angles: dict) -> dict:
+        return virtual_angles(GEOMETRY, _complete(angles), self.n_surface, self.n_reference)
+
+    def spots(self, angles: dict, hkls, energy: float, width=77.0, height=77.0) -> dict:
+        """Outgoing beams of several reflections (see hklforge ``Diffractometer.spots``)."""
+        d = Diffractometer(GEOMETRY, self.UB, energy=energy)
+        return d.spots(_complete(angles), hkls, width=width, height=height)
+
+    # --- solving ---
+
+    def solve(self, hkl, energy: float, constraints: dict, detector: str = "h1") -> pd.DataFrame:
+        """Every position putting ``hkl`` in Bragg condition.
+
+        ``constraints``: {name: value} of the held ones (circles, virtual
+        angles, booleans True, ``h2``: a second (h, k, l)). Returns a
+        DataFrame with one column per solution ('sol. 0', ...) and the angles
+        as rows (``ROW_ORDER``); empty if there is none.
+        """
+        mode = make_mode(constraints)
+        if any(k in mode for k in SURFACE_CONSTRAINTS) and self.surface is None:
+            raise ValueError("betain, betaout and bin_eq_bout need a surface normal (sample tab)")
+        if "h2" not in mode:
+            detector = "h1"
+        pl = _plan(mode, detector)
+        k = wavevector(energy)
         try:
-            df = solve_hkl(ubcalc, cons, h, k, l, energy)
-            col = df.columns[solution] if solution < len(df.columns) else df.columns[-1]
-            row = df[col].to_dict()
-            row["error"] = ""
-        except Exception as e:
-            row = {"error": str(e)}
-        rows.append(row)
-    index = pd.MultiIndex.from_tuples(reflections, names=["h", "k", "l"])
-    return pd.DataFrame(rows, index=index)
+            positions = pl.run(self.UB, k, tuple(float(x) for x in hkl), self.n_surface, self.n_reference)
+        except Degenerate as e:
+            raise ValueError(f"({' '.join(f'{x:g}' for x in hkl)}) has a continuum of solutions under "
+                             f"these constraints ({e}); hold another angle instead") from None
+        rows = []
+        for a in positions:
+            row = {n: float(a[n]) for n in CIRCLES}
+            row.update(virtual_angles(GEOMETRY, a, self.n_surface, self.n_reference))
+            rows.append(row)
+        df = pd.DataFrame(rows, index=[f"sol. {i}" for i in range(len(rows))]).T
+        if df.empty:
+            return df
+        ordered = [r for r in ROW_ORDER if r in df.index] + [r for r in df.index if r not in ROW_ORDER]
+        return df.reindex(ordered).astype(float)
 
 
-def make_position(mu=0.0, delta=0.0, gamma=0.0, eta=0.0, chi=0.0, phi=0.0) -> Position:
-    """Build a diffcalc Position (degrees) from Bernina-style angle names
-    (``gamma`` is translated to diffcalc's ``nu``)."""
-    return Position(mu=mu, delta=delta, nu=gamma, eta=eta, chi=chi, phi=phi)
+_PLANS: dict = {}
 
 
-def detector_hkl_grid(
-    ubcalc: UBCalculation,
-    pos: Position,
-    energy: float,
-    tdet: float,
-    width: float,
-    height: float,
-    n: int = 9,
-):
-    """hkl at an n x n grid of points across a flat area detector.
-
-    The detector is centered on the outgoing-beam direction defined by
-    ``pos``'s delta/gamma, at distance ``tdet`` from the sample, ``width``
-    x ``height`` in size (same length unit as ``tdet``, e.g. mm).
-
-    Uses diffcalc's own q_phi convention directly (see ``geometry.get_q_phi``):
-    q = k_out_hat - k_in_hat (unit vectors), then hkl = (2*pi/lambda) * UB^-1 @ q_phi
-    -- verified to reproduce the exact (h,k,l) at the pixel matching a
-    solved reflection's own delta/gamma. Returns (H, K, L), each an
-    ``n`` x ``n`` numpy array.
-    """
-    lam = en2lam(energy)
-    MU, DELTA, NU, ETA, CHI, PHI = get_rotation_matrices(pos)
-    nu_delta = NU @ DELTA
-    arm_dir = (nu_delta @ np.array([[0.0], [1.0], [0.0]])).ravel()
-    row_dir = (nu_delta @ np.array([[1.0], [0.0], [0.0]])).ravel()
-    col_dir = (nu_delta @ np.array([[0.0], [0.0], [1.0]])).ravel()
-    k_in = np.array([0.0, 1.0, 0.0])
-
-    sample_inv = (
-        np.linalg.inv(PHI) @ np.linalg.inv(CHI) @ np.linalg.inv(ETA) @ np.linalg.inv(MU)
-    )
-    ub_inv = np.linalg.inv(ubcalc.UB)
-
-    us = np.linspace(-width / 2, width / 2, n)
-    vs = np.linspace(-height / 2, height / 2, n)
-    H = np.zeros((n, n))
-    K = np.zeros((n, n))
-    L = np.zeros((n, n))
-    for j, v in enumerate(vs):
-        for i, u in enumerate(us):
-            p = tdet * arm_dir + u * row_dir + v * col_dir
-            k_out_hat = p / np.linalg.norm(p)
-            q_lab = k_out_hat - k_in
-            q_phi = sample_inv @ q_lab
-            hkl = (2 * np.pi / lam) * (ub_inv @ q_phi)
-            H[j, i], K[j, i], L[j, i] = hkl
-    return H, K, L
+def make_mode(constraints: dict) -> dict:
+    """{name: value or None/False} -> hklforge mode (held constraints only).
+    Accepts the diffcalc-era names (gam, nu); refuses unsupported ones."""
+    mode = {}
+    for key, val in constraints.items():
+        key = LEGACY_NAMES.get(key, key)
+        if key in UNSUPPORTED:
+            if val:
+                raise ValueError(f"{key} is not supported by hklforge; hold gamma and mu instead")
+            continue
+        if val is None or val is False or (isinstance(val, str) and val == ""):
+            continue
+        if key in BOOL_CONSTRAINTS:
+            mode[key] = True
+        elif key == "h2":
+            mode["h2"] = tuple(float(x) for x in val)
+        elif key in CIRCLES or key in VIRTUAL_CONSTRAINTS:
+            mode[key] = float(val)
+        else:
+            raise ValueError(f"unknown constraint {key!r}")
+    return mode
 
 
-def detector_hkl_summary(
-    ubcalc: UBCalculation,
-    pos: Position,
-    energy: float,
-    tdet: float,
-    width: float,
-    height: float,
-    n: int = 9,
-) -> pd.Series:
-    """min/max h, k, l covered by the detector footprint (see
-    ``detector_hkl_grid``), as a convenience summary."""
-    H, K, L = detector_hkl_grid(ubcalc, pos, energy, tdet, width, height, n)
-    return pd.Series(
-        {
-            "h_min": H.min(), "h_max": H.max(),
-            "k_min": K.min(), "k_max": K.max(),
-            "l_min": L.min(), "l_max": L.max(),
-        }
-    )
+def _plan(mode: dict, detector: str):
+    key = (tuple(sorted((n, repr(v)) for n, v in mode.items())), detector)
+    if key not in _PLANS:
+        _PLANS[key] = _hkl_plan(GEOMETRY, mode, detector)
+    return _PLANS[key]
 
 
-# --- support for the 3D view -------------------------------------------------
-
-# Mechanism angles the 3D diffractometer view understands, in Bernina naming.
-VIEW_ANGLES = ["mu", "eta", "chi", "phi", "delta", "gamma"]
+def _complete(angles: dict) -> dict:
+    return {n: float(angles.get(n, 0.0)) for n in CIRCLES}
 
 
 def solution_angles(df: pd.DataFrame, column) -> dict:
-    """Pull the six mechanism angles of one solution branch out of a
-    :func:`solve_hkl` table, as a plain {name: float} dict.
-
-    ``column`` may be a column label ('sol. 0') or an integer position.
-    Angles the table doesn't carry come back as 0.0, so the view always gets
-    a complete set.
-    """
+    """The six circles of one solution column as {name: float}."""
     col = df.columns[column] if isinstance(column, int) else column
-    series = df[col]
-    return {
-        name: (float(series[name]) if name in series.index and pd.notna(series[name]) else 0.0)
-        for name in VIEW_ANGLES
-    }
+    s = df[col]
+    return {n: (float(s[n]) if n in s.index and pd.notna(s[n]) else 0.0) for n in CIRCLES}
 
 
-def k_magnitude(energy: float) -> float:
-    """|k| in inverse angstrom, in diffcalc's 2*pi convention.
+# --- filters ---------------------------------------------------------------------
 
-    diffcalc's UB is built so that |UB @ (h,k,l)| = 2*pi/d, so the incident
-    wavevector has to use the same convention for Q = k' - k to come out at
-    2*pi/d and land on a reciprocal lattice node.
+
+def wrap_into(value, lo, hi):
+    """``value`` or value +- 360 n inside [lo, hi], else None (a circle at
+    190 is the same position as at -170)."""
+    for n in (0, -1, 1, -2, 2):
+        v = value + 360.0 * n
+        if lo <= v <= hi:
+            return v
+    return None
+
+
+def passes(solution, ranges: dict) -> bool:
+    """Whether a solution (Series or dict) lies in {name: (min or None, max
+    or None)}. A circle with both bounds may be shifted by 360 degrees, as
+    eco's solution ranges; anything else is compared as it is."""
+    for name, (lo, hi) in ranges.items():
+        name = LEGACY_NAMES.get(name, name)
+        v = solution.get(name)
+        if v is None or not np.isfinite(v):
+            continue
+        if name in CIRCLES and lo is not None and hi is not None:
+            if wrap_into(float(v), lo, hi) is None:
+                return False
+        elif (lo is not None and v < lo) or (hi is not None and v > hi):
+            return False
+    return True
+
+
+# --- many reflections --------------------------------------------------------------
+
+
+def reflection_table(sample: Sample, constraints: dict, reflections, energy: float,
+                     ranges: dict | None = None, solution: int = 0, detector: str = "h1") -> pd.DataFrame:
+    """One row per (h, k, l): solution number ``solution`` among those passing
+    ``ranges``; an 'error' column says why a row has none."""
+    rows = []
+    for hkl in reflections:
+        try:
+            df = sample.solve(hkl, energy, constraints, detector)
+            cols = [c for c in df.columns if passes(df[c], ranges or {})]
+            if not cols:
+                row = {"error": "no solution" if df.empty else f"none of {len(df.columns)} passes the filters"}
+            else:
+                row = df[cols[min(solution, len(cols) - 1)]].to_dict()
+                row["solutions"] = len(cols)
+                row["error"] = ""
+        except Exception as e:
+            row = {"error": str(e)}
+        rows.append(row)
+    index = pd.MultiIndex.from_tuples([tuple(r) for r in reflections], names=["h", "k", "l"])
+    return pd.DataFrame(rows, index=index)
+
+
+# --- the detector ----------------------------------------------------------------
+
+# a flat detector centred on the detector arm, its width along x and its
+# height along y with all angles 0 (as drawn in the 3D view). JUNGFRAU
+# module: 1024 x 512 pixels of 75 um (gaps between chips ignored).
+DETECTOR_PRESETS = {
+    "77 x 77 mm": (77.0, 77.0),
+    "JUNGFRAU 1 module (76.8 x 38.4 mm)": (76.8, 38.4),
+    "JUNGFRAU 2 modules (76.8 x 76.8 mm)": (76.8, 76.8),
+    "JUNGFRAU 4 modules (153.6 x 76.8 mm)": (153.6, 76.8),
+}
+
+# Bernina's JUNGFRAU detectors with their module gaps, from jungfrau_utils
+# (geometry.py, detector_geometry): the origin of each module in pixels of the
+# assembled image, where a module is 1030 x 514 pixels (4 x 2 chips of 256 plus
+# the 2-pixel gaps of the double-size pixels between chips). Image x is drawn
+# along the width, image y along the height, row 0 at the bottom; the detector
+# is centred on the arm.
+JF_PIXEL = 0.075
+JF_MODULE = (1030, 514)
+JUNGFRAU_LAYOUTS = {
+    "JF01T03": ((0, 0, 0), (0, 550, 1100)),
+    "JF07T32": ((68, 1107, 2146, 3185) * 4 + (0, 1039, 2078, 3117) * 4,
+                tuple(550 * row + dy for row in range(8) for dy in (0, 0, 68, 68))),
+}
+
+
+def jungfrau_modules(name: str, rotated: bool = False):
+    """(width, height, modules) of a JUNGFRAU layout in mm; modules are
+    (u0, v0, u1, v1) rectangles in face coordinates, centred on the detector.
+    ``rotated``: turned by 90 degrees on the arm, image x along the height."""
+    ox, oy = (np.asarray(o, float) for o in JUNGFRAU_LAYOUTS[name])
+    width = float((ox.max() + JF_MODULE[0]) * JF_PIXEL)
+    height = float((oy.max() + JF_MODULE[1]) * JF_PIXEL)
+    modules = tuple((x * JF_PIXEL - width / 2, y * JF_PIXEL - height / 2,
+                     (x + JF_MODULE[0]) * JF_PIXEL - width / 2, (y + JF_MODULE[1]) * JF_PIXEL - height / 2)
+                    for x, y in zip(ox, oy))
+    if rotated:   # (u, v) -> (-v, u)
+        return height, width, tuple((-v1, u0, -v0, u1) for u0, v0, u1, v1 in modules)
+    return width, height, modules
+
+
+# module rectangles of the presets that have gaps between modules
+DETECTOR_MODULES = {}
+for _name, _what in (("JF01T03", "Bernina 1.5M, 3 modules"), ("JF07T32", "Bernina 16M, 32 modules")):
+    for _rotated in (False, True):
+        _w, _h, _modules = jungfrau_modules(_name, _rotated)
+        _label = f"{_name} {_what}{', turned 90°' if _rotated else ''} ({_w:.1f} x {_h:.1f} mm)"
+        DETECTOR_PRESETS[_label] = (round(_w, 4), round(_h, 4))
+        DETECTOR_MODULES[_label] = _modules
+
+
+def on_modules(modules, u, v):
+    """True where face points (u, v) lie on a module; everywhere if ``modules`` is None."""
+    u, v = np.asarray(u, float), np.asarray(v, float)
+    if not modules:
+        return np.isfinite(u) & np.isfinite(v)
+    hit = np.zeros(np.broadcast(u, v).shape, bool)
+    for u0, v0, u1, v1 in modules:
+        hit |= (u >= u0) & (u <= u1) & (v >= v0) & (v <= v1)
+    return hit
+
+
+def _detector_frame(angles):
+    D = GEOMETRY.detector_matrix(_complete(angles))
+    return D @ np.asarray(BEAM), D @ np.array([1.0, 0, 0]), D @ np.array([0, 1.0, 0])
+
+
+def detector_map(sample: Sample, angles: dict, energy: float, distance: float,
+                 width: float = 77.0, height: float = 77.0, n: int = 41) -> dict:
+    """h, k, l, abs(Q) and 2 theta over the detector face at these angles:
+    arrays (n_v, n_u) plus the face coordinates u (width) and v (height) in mm.
+
+    Each point of the face sees Q = k' - k of the beam scattered towards it;
+    the crystal is in Bragg condition only where that Q is a lattice vector.
     """
-    return 2.0 * np.pi / en2lam(energy)
+    nx = max(2, int(round(n * width / max(width, height))))
+    ny = max(2, int(round(n * height / max(width, height))))
+    arm, ex, ey = _detector_frame(angles)
+    u = np.linspace(-width / 2, width / 2, nx)
+    v = np.linspace(-height / 2, height / 2, ny)
+    U, V = np.meshgrid(u, v)
+    P = distance * arm + U[..., None] * ex + V[..., None] * ey
+    k = wavevector(energy)
+    kout = P / np.linalg.norm(P, axis=-1, keepdims=True)
+    q_lab = k * (kout - np.asarray(BEAM))
+    S = GEOMETRY.sample_matrix(_complete(angles))
+    q_phi = q_lab @ S                     # each row S^T q
+    hkl = np.linalg.solve(sample.UB, q_phi.reshape(-1, 3).T).T.reshape(q_phi.shape)
+    tth = np.degrees(np.arccos(np.clip(kout @ np.asarray(BEAM), -1, 1)))
+    return {"h": hkl[..., 0], "k": hkl[..., 1], "l": hkl[..., 2],
+            "Q": np.linalg.norm(q_lab, axis=-1), "ttheta": tth, "u": u, "v": v}
 
 
-def reciprocal_basis(ubcalc: UBCalculation) -> list[list[float]]:
-    """The reciprocal cell vectors a*, b*, c* as the columns of a 3x3 matrix,
-    in the phi (sample) frame and in inverse angstrom.
+def detector_summary(m: dict) -> pd.DataFrame:
+    """min/max of h, k, l, abs(Q) [1/A] and 2 theta over the face."""
+    return pd.DataFrame({x: [float(np.min(m[x])), float(np.max(m[x]))] for x in ("h", "k", "l", "Q", "ttheta")},
+                        index=["min", "max"])
 
-    These are just diffcalc's UB: its columns are the images of (1,0,0),
-    (0,1,0) and (0,0,1), i.e. a*, b* and c*. Returned in the phi frame - the
-    frame the sample circles rotate - so a viewer can attach them to the
-    sample and let mu/eta/chi/phi carry them into the lab frame.
+
+def reflections_on_detector(sample: Sample, angles: dict, energy: float, distance: float,
+                            width: float = 77.0, height: float = 77.0, tolerance: float = 0.005,
+                            allowed=None) -> pd.DataFrame:
+    """Integer reflections close to Bragg condition at these angles whose
+    outgoing beam lands on the detector.
+
+    ``tolerance``: allowed distance of the lattice point from the Ewald
+    sphere as a fraction of abs(k) (bandwidth, mosaicity, divergence; 0.005
+    is a 0.5 % band). ``allowed(hkl) -> bool`` drops forbidden reflections.
+    Columns: position on the face (u, v in mm), excitation error, d, 2 theta.
     """
-    return np.asarray(ubcalc.UB, dtype=float).tolist()
+    k = wavevector(energy)
+    S = GEOMETRY.sample_matrix(_complete(angles))
+    arm, ex, ey = _detector_frame(angles)
+    beam = np.asarray(BEAM)
+    qmax = 2 * k * (1 + tolerance)            # the limiting sphere
+    lim = [int(np.ceil(qmax / np.linalg.norm(sample.UB @ e))) for e in np.eye(3)]
+    if np.prod([2 * m + 1 for m in lim]) > 3e6:
+        raise ValueError("too many lattice points below 2 theta = 180 for this check (large cell, high energy)")
+    rng = [np.arange(-m, m + 1) for m in lim]
+    H = np.stack(np.meshgrid(*rng, indexing="ij"), -1).reshape(-1, 3)
+    H = H[np.any(H != 0, axis=1)]
+    kout = (S @ sample.UB @ H.T).T + k * beam
+    excitation = (np.linalg.norm(kout, axis=1) - k) / k
+    sel = np.abs(excitation) <= tolerance
+    rows = []
+    for hkl, ko, exc in zip(H[sel], kout[sel], excitation[sel]):
+        ku = ko / np.linalg.norm(ko)
+        along = ku @ arm
+        if along <= 0:
+            continue
+        p = ku * distance / along
+        u, v = p @ ex, p @ ey
+        if abs(u) > width / 2 or abs(v) > height / 2:
+            continue
+        hkl_t = tuple(int(x) for x in hkl)
+        if allowed is not None and not allowed(hkl_t):
+            continue
+        rows.append({"h": hkl_t[0], "k": hkl_t[1], "l": hkl_t[2], "u [mm]": u, "v [mm]": v,
+                     "excitation": exc, "d [A]": sample.d_spacing(hkl),
+                     "ttheta": float(np.degrees(np.arccos(np.clip(ku @ beam, -1, 1))))})
+    df = pd.DataFrame(rows)
+    return df.sort_values("excitation", key=np.abs).reset_index(drop=True) if len(df) else df
 
 
-def surface_normal_phi(ubcalc: UBCalculation) -> list[float]:
-    """The sample surface normal as a unit vector in the phi (sample) frame.
+# --- reachability --------------------------------------------------------------------
 
-    diffcalc derives this from the entered ``n_hkl`` via UB (the normal of the
-    (hkl) planes is along the reciprocal-lattice vector), so it already carries
-    both the surface index and the crystal orientation. Returned in the phi
-    frame, which is the frame the sample circles rotate, so a viewer can attach
-    it to the sample and let mu/eta/chi/phi take it into the lab.
+
+def reachable_reflections(sample: Sample, energy: float, constraints: dict, hkls,
+                          ranges: dict | None = None, aperture=None, detector: str = "h1") -> pd.DataFrame:
+    """For each (h, k, l): can it be reached under these constraints, inside
+    the min/max ranges and (optionally) through ``aperture``?
+
+    ``aperture(gamma, delta) -> bool`` checks the detector angles, e.g. a THC
+    envelope (``thc_angles.aperture_check``). One row per reflection with the
+    first solution passing everything, how many do, and if none, why not.
     """
-    n = np.asarray(ubcalc.n_phi, dtype=float).ravel()
-    norm = np.linalg.norm(n)
-    return (n / norm).tolist() if norm > 0 else [0.0, 0.0, 1.0]
+    rows = []
+    for hkl in hkls:
+        row = {"h": hkl[0], "k": hkl[1], "l": hkl[2], "d [A]": sample.d_spacing(hkl)}
+        try:
+            df = sample.solve(hkl, energy, constraints, detector)
+        except Exception as e:
+            rows.append({**row, "reachable": False, "why not": str(e)})
+            continue
+        if df.empty:
+            beyond = np.linalg.norm(sample.B @ np.asarray(hkl, float)) > 2 * wavevector(energy)
+            rows.append({**row, "reachable": False,
+                         "why not": "2 theta > 180: energy too low" if beyond else "no solution under these constraints"})
+            continue
+        good = [c for c in df.columns if passes(df[c], ranges or {})]
+        if not good:
+            rows.append({**row, "reachable": False, "why not": f"{len(df.columns)} solution(s), none in the min/max ranges"})
+            continue
+        if aperture is not None:
+            through = [c for c in good if aperture(df.loc["gamma", c], df.loc["delta", c])]
+            if not through:
+                rows.append({**row, "reachable": False, "why not": f"{len(good)} solution(s), none through the aperture"})
+                continue
+            good = through
+        best = df[good[0]]
+        rows.append({**row, "reachable": True, "why not": "", "solutions": len(good),
+                     **{n: float(best[n]) for n in CIRCLES}, "ttheta": float(best["ttheta"])})
+    return pd.DataFrame(rows)
+
+
+# --- the 3D view -------------------------------------------------------------------
+
+
+def view_payload(sample: Sample | None, angles: dict, energy: float, label: str = "",
+                 targets=None, n: int = 0) -> dict:
+    """The message the 3D page (``view3d.VIEWER_HTML``) reads. The page
+    computes its mechanism on You's axes, so UB and the surface normal are
+    handed over in that frame."""
+    msg = {"angles": _complete(angles), "kMag": k_magnitude(energy), "label": label, "n": n}
+    if sample is not None:
+        msg["ub"] = to_you(sample.UB).tolist()
+        ns = sample.n_surface
+        msg["nPhi"] = None if ns is None else to_you(ns).tolist()
+    if targets:
+        msg["targets"] = [list(map(float, t)) for t in targets]
+    return msg

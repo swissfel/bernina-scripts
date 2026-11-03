@@ -7,6 +7,19 @@ name = "bernina-prep"
 version = "0.1.0"
 description = "Shared calculation code for the Bernina beamline prep apps and example notebooks"
 requires-python = ">=3.10"
+# Binder installs these from binder/environment.yml (postBuild uses --no-deps);
+# listed so a plain `pip install -e .` works too
+dependencies = ["numpy", "scipy", "pandas", "matplotlib", "ipywidgets>=8.1,<9", "ipympl>=0.9.4", "hklforge>=0.0.1"]
+
+[project.optional-dependencies]
+crystal = ["gemmi", "xraydb"]
+test = ["pytest", "diffcalc-core", "gemmi", "xraydb"]
 
 [tool.setuptools]
 packages = ["bernina_prep"]
+
+[tool.setuptools.package-data]
+bernina_prep = ["diffractometer_3d.html", "presets.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

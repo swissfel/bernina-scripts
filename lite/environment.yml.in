@@ -1,0 +1,26 @@
+# The Python environment of the browser build (xeus-python on WebAssembly).
+# build.sh fills in @WHEEL@ with the bernina_prep wheel it builds.
+#
+# Compiled packages come from emscripten-forge, pure-Python ones from
+# conda-forge (noarch) or PyPI. gemmi has no WebAssembly build: the browser
+# version knows only lattice-centring absences, reads no CIF files and gives
+# no structure factors (bernina_prep.crystal falls back on its own).
+name: xeus-python-kernel
+channels:
+  - https://repo.prefix.dev/emscripten-forge-4x
+  - conda-forge
+dependencies:
+  - xeus-python
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
+  - ipywidgets
+  - ipympl
+  - sqlalchemy       # xraydb
+  - pyyaml           # hklforge
+  - platformdirs     # xraydb
+  - pip:
+    - hklforge
+    - xraydb
+    - @WHEEL@
