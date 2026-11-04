@@ -137,3 +137,33 @@ def test_detector_in_step_with_3d_view(app):
     assert (app.d_w.value, app.d_h.value) == (50, 60) and app._detector_modules() is None
     app.det_from_view.value = "not json"          # ignored
     assert _payload(app)["detector"] == {"w": 50, "h": 60}
+
+
+def test_state_remembered_in_browser(app):
+    from bernina_prep import diffraction as dif
+    # nothing is saved before the page has offered what it remembers
+    app.push_view()
+    assert "autosave" not in _payload(app)
+    app.state_from_view.value = "{}"                 # nothing remembered: start saving
+    assert _payload(app)["autosave"]["energy"] == app.ctrl["energy"].value
+    # change things, then carry the state over into a new session
+    app.ctrl["h"].value, app.ctrl["energy"].value = 2.0, 8500.0
+    app.filters["delta"][1].value = "170"
+    jf01 = next(k for k in dif.DETECTOR_PRESETS if k.startswith("JF01") and "turned" not in k)
+    app.d_preset.value, app.d_dist.value = jf01, 320.0
+    assert len(app.cols) >= 2
+    app.select(1)
+    state = _payload(app)["autosave"]
+    new = ReflectionsApp()
+    new.state_from_view.value = json.dumps({"state": state, "display": {"showCell": True}, "savedText": "today"})
+    assert new.ctrl["h"].value == 2.0 and new.ctrl["energy"].value == 8500.0
+    assert new.filters["delta"][1].value == "170"
+    assert new.d_preset.value == jf01 and new.d_dist.value == 320.0 and new.selected == app.selected
+    assert new.restore_box.layout.display == "flex" and "today" in new.restore_note.value
+    assert _payload(new)["autosave"]["hkl"]["h"] == 2.0
+    new.state_from_view.value = json.dumps({"state": {"energy": 7000.0}})   # only once per session
+    assert new.ctrl["energy"].value == 8500.0
+    # start fresh: the page is told to forget and reload; no more autosaves
+    new.fresh_btn.click()
+    msg = _payload(new)
+    assert msg.get("forgetState") is True and "autosave" not in msg

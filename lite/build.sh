@@ -4,17 +4,19 @@
 #
 #   lite/build.sh            -> lite/_output/site/          (the static site)
 #                               lite/_output/bernina-apps.zip
+#   LITE_OUT=/elsewhere lite/build.sh   builds there instead (~2 GB while building)
 #
-# Needs python >= 3.10 and, for the launchers, go (skipped if missing).
+# Needs python >= 3.10 (python or python3, or $PYTHON) and, for the launchers, go (skipped if missing).
 # The site can be put on any static web host (GitHub Pages: see
 # .github/workflows/lite.yml); locally: python -m http.server -d lite/_output/site
 set -euo pipefail
 cd "$(dirname "$0")"
-out=_output
+out=$(realpath -m "${LITE_OUT:-_output}")
 rm -rf "$out"
+export PIP_CACHE_DIR="$out/pip-cache" GOCACHE="$out/go-cache"
 mkdir -p "$out/wheels" "$out/content"
 
-python -m venv "$out/venv"
+"${PYTHON:-$(command -v python || command -v python3)}" -m venv "$out/venv"
 "$out/venv/bin/pip" install -q voici ipywidgets ipympl
 "$out/venv/bin/pip" wheel -q --no-deps -w "$out/wheels" ..
 rm -rf ../build                       # setuptools' scratch folder
@@ -36,7 +38,7 @@ if command -v go >/dev/null; then
          os=${target%/*}; arch=${target#*/}
          name=bernina-apps-$os-$arch; [ "$os" = windows ] && name=$name.exe
          [ "$os" = darwin ] && name=bernina-apps-macos-$arch
-         GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "../$pkg/$name" .
+         GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$pkg/$name" .
      done)
 else
     echo "go not found: zip without launchers"

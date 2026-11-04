@@ -9,17 +9,24 @@ The badge launches Voila's tree view of `apps/` as a start page — pick a tool
 and it runs live, no local install needed. Individual apps can also be opened
 directly:
 
-| app | JupyterLab | app view (voila) |
-| --- | --- | --- |
-| diffraction reflections | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Fdiffraction_reflections.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Fdiffraction_reflections.ipynb) |
-| 3D diffractometer | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Fdiffractometer_3d.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Fdiffractometer_3d.ipynb) |
-| THC accessible angles | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Fthc_angles.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Fthc_angles.ipynb) |
-| beam size calculator | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Fbeam_size_calculator.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Fbeam_size_calculator.ipynb) |
-| pump-probe time resolution | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Ftime_resolution.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Ftime_resolution.ipynb) |
+| app | JupyterLab | app view (voila) | in the browser, no Binder |
+| --- | --- | --- | --- |
+| diffraction reflections | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Fdiffraction_reflections.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Fdiffraction_reflections.ipynb) | [![in the browser](https://img.shields.io/badge/run-in_the_browser-2b7bb9)](https://swissfel.github.io/bernina-scripts/voici/render/diffraction_reflections.html) |
+| 3D diffractometer | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Fdiffractometer_3d.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Fdiffractometer_3d.ipynb) | [![in the browser](https://img.shields.io/badge/run-in_the_browser-2b7bb9)](https://swissfel.github.io/bernina-scripts/voici/render/diffractometer_3d.html) |
+| THC accessible angles | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Fthc_angles.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Fthc_angles.ipynb) | [![in the browser](https://img.shields.io/badge/run-in_the_browser-2b7bb9)](https://swissfel.github.io/bernina-scripts/voici/render/thc_angles.html) |
+| beam size calculator | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Fbeam_size_calculator.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Fbeam_size_calculator.ipynb) | [![in the browser](https://img.shields.io/badge/run-in_the_browser-2b7bb9)](https://swissfel.github.io/bernina-scripts/voici/render/beam_size_calculator.html) |
+| pump-probe time resolution | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?labpath=apps%2Ftime_resolution.ipynb) | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD?urlpath=voila%2Frender%2Fapps%2Ftime_resolution.ipynb) | [![in the browser](https://img.shields.io/badge/run-in_the_browser-2b7bb9)](https://swissfel.github.io/bernina-scripts/voici/render/time_resolution.html) |
 
 Notebooks are shipped without stored outputs, so in JupyterLab use
 *Run > Restart Kernel and Run All Cells* to build the input fields. The voila
 links run the notebook for you and show only the widgets.
+
+The browser links need no Binder at all: Python runs inside the browser tab
+(the first start loads ~60 MB, later starts come from the browser cache), and
+a session never times out. Only lattice-centring absences there, no CIF
+files and no structure factors (gemmi has no browser build). The reflections
+app remembers its last state in the browser in both versions, so a Binder
+session that timed out continues where it was ("start fresh" forgets it).
 
 ## Layout
 
@@ -118,7 +125,7 @@ Read the comments in [`binder/environment.yml`](binder/environment.yml) and
 Several constructs render fine in JupyterLab and show up completely blank under
 voila, and the widget stack is deliberately constrained.
 
-## Browser version (draft)
+## Browser version
 
 `lite/build.sh` builds the apps as a static site that runs entirely in the
 browser (Voici: voila on JupyterLite, Python as WebAssembly), plus
@@ -126,5 +133,5 @@ browser (Voici: voila on JupyterLite, Python as WebAssembly), plus
 (`lite/server`, Go). No installation; ~100 MB zip, ~60 MB loaded by the
 browser on first start. gemmi has no WebAssembly build, so the browser
 version knows only lattice-centring absences. `.github/workflows/lite.yml`
-would publish it to GitHub Pages (needs Pages enabled with source "GitHub
-Actions").
+publishes it to GitHub Pages on every push (Pages source: "GitHub Actions")
+and attaches the zip to the run.

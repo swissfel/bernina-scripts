@@ -1,10 +1,11 @@
 # Browser version of the apps (Voici): published to GitHub Pages and, for
 # download, attached to the run as bernina-apps.zip (site + launchers).
-# Needs Settings > Pages > Source: "GitHub Actions" in the repository; until
-# that is set it only runs when started by hand (Actions > browser version).
+# Needs Settings > Pages > Source: "GitHub Actions" in the repository.
 name: browser version
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

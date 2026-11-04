@@ -168,6 +168,8 @@ class ReflectionsApp:
         self.cols = []
         self.selected = SEL_CONFIG
         self.display_settings = None
+        self._restore_done = False  # until the 3D page has offered the state it remembers
+        self._forget = False
         self.results = {}           # last result of each tool, also for scripts and tests
         self.presets = load_presets(presets_path)
         self._build_inputs()
@@ -317,6 +319,9 @@ class ReflectionsApp:
         # the 3D page writes its detector choice here (see its sendDetector)
         self.det_from_view = widgets.Text(layout=L(display="none"))
         self.det_from_view.add_class("diff3d-detector-in")
+        # ... and, once, the state it remembers from the last session in this browser
+        self.state_from_view = widgets.Text(layout=L(display="none"))
+        self.state_from_view.add_class("diff3d-state-in")
 
     # ================================================================ tools
 
@@ -442,7 +447,8 @@ class ReflectionsApp:
             "solutions": Panel("solutions", w.VBox([
                 w.HTML('<span style="font-size:11px;color:#666">click a column to show it in the 3D view</span>'),
                 self.solve_msg, self.solution_buttons, self.table_html, self.config_hkl])),
-            "view": Panel("3D view", w.VBox([self.view_frame, self.payload_holder, self.det_from_view])),
+            "view": Panel("3D view", w.VBox([self.view_frame, self.payload_holder, self.det_from_view,
+                                             self.state_from_view])),
             "tools": Panel("tools", self.tool_tabs, is_open=False),
         }
         self.layout_switch = w.ToggleButtons(options=list(self.LAYOUTS), value="large 3D",
@@ -458,8 +464,13 @@ class ReflectionsApp:
                     layout=L(margin="0 16px 0 0")),
              self.layout_switch, self.view_height, self.help_btn],
             layout=L(align_items="center", flex_flow="row wrap", margin="0 0 8px 0"))
+        self.restore_note = w.HTML()
+        self.fresh_btn = w.Button(description="start fresh", layout=L(width="110px"),
+                                  tooltip="forget the remembered state and reload with the defaults")
+        self.restore_box = w.HBox([self.restore_note, self.fresh_btn],
+                                  layout=L(display="none", align_items="center", margin="0 0 8px 0"))
         self.body = w.VBox(layout=L(width="100%"))
-        self.ui = w.VBox([header, self.help_box, self.body], layout=L(width="100%"))
+        self.ui = w.VBox([header, self.restore_box, self.help_box, self.body], layout=L(width="100%"))
         self.arrange()
         self.display_settings = {"controlsBelow": False}
 
@@ -504,12 +515,14 @@ class ReflectionsApp:
         self.layout_switch.observe(self.arrange, names="value")
         self.layout_switch.observe(self._view_controls_for_layout, names="value")
         self.view_height.observe(lambda _c: self.push_view(), names="value")
+        self.state_from_view.observe(self._state_from_view, names="value")
+        self.fresh_btn.on_click(self._start_fresh)
         self.help_btn.observe(lambda c: setattr(self.help_box.layout, "display", "flex" if c["new"] else "none"),
                               names="value")
         self.t_btn.on_click(self.run_table)
         self.r_btn.on_click(self.run_reachable)
         self.d_preset.observe(self._detector_preset, names="value")
-        for wid in (self.d_w, self.d_h):
+        for wid in (self.d_w, self.d_h, self.d_dist):
             wid.observe(lambda _c: self.push_view(), names="value")
         self.det_from_view.observe(self._detector_from_view, names="value")
         self.d_btn.on_click(self.run_detector)
@@ -733,6 +746,10 @@ class ReflectionsApp:
         if self.display_settings is not None:
             msg["display"] = self.display_settings          # sent once
             self.display_settings = None
+        if self._forget:
+            msg["forgetState"] = True
+        elif self._restore_done:
+            msg["autosave"] = self.autosave_state()
         self._pushes += 1
         self.payload_holder.value = ('<span id="diff3d-payload" style="display:none">'
                                      + html.escape(json.dumps(msg)) + "</span>")
@@ -807,8 +824,8 @@ class ReflectionsApp:
     def _toggle_store(self, _b=None):
         self.store_panel.layout.display = "none" if self.store_panel.layout.display != "none" else "flex"
 
-    def current_config(self) -> dict:
-        inc = {k: b.value for k, b in self.include.items()}
+    def current_config(self, everything: bool = False) -> dict:
+        inc = {k: everything or b.value for k, b in self.include.items()}
         cfg = {"version": 2}
         if inc["sample"]:
             cfg["sample"] = {k: self.ctrl[k].value for k in DEFAULT_SAMPLE}
@@ -827,6 +844,62 @@ class ReflectionsApp:
                              "open": {k: v.is_open for k, v in self.panels.items()},
                              "input_tab": self.input_tabs.selected_index, "view_height": self.view_height.value}
         return cfg
+
+    # ---------------------------------------------------------- remembered in the browser
+    # The 3D page keeps the last autosave_state() in the browser's storage and
+    # offers it back once when a new session starts (state_from_view), so a
+    # Binder session that timed out continues where it was. Nothing is saved
+    # before that offer, or a fresh session's defaults would overwrite it.
+
+    def autosave_state(self) -> dict:
+        state = self.current_config(everything=True)
+        state["tools"] = {"detector": self.d_preset.value, "width": self.d_w.value, "height": self.d_h.value,
+                          "distance": self.d_dist.value}
+        state["selected"] = self.selected
+        return state
+
+    def _state_from_view(self, change):
+        if self._restore_done:
+            return
+        self._restore_done = True
+        try:
+            offered = json.loads(change["new"] or "{}")
+            if offered.get("state"):
+                self.restore_state(offered["state"], offered.get("display"), offered.get("savedText", ""))
+        except Exception as exc:
+            self.restore_note.value = _err(f"could not restore the remembered state: {exc}")
+            self.restore_box.layout.display = "flex"
+        self.push_view()
+
+    def restore_state(self, state: dict, display: dict | None = None, saved_text: str = ""):
+        """Apply a state from autosave_state() (and the 3D page's display settings)."""
+        cfg = dict(state)
+        if display:
+            cfg["display"] = display
+        self._suspend = True
+        try:
+            self.apply_config(cfg)
+            tools = state.get("tools") or {}
+            if tools.get("detector") in dif.DETECTOR_PRESETS:
+                self.d_preset.value = tools["detector"]
+            for key, wid in (("width", self.d_w), ("height", self.d_h), ("distance", self.d_dist)):
+                if isinstance(tools.get(key), (int, float)):
+                    wid.value = tools[key]
+        finally:
+            self._suspend = False
+        self.recompute()
+        sel = state.get("selected")
+        if sel in (SEL_CONFIG, SEL_ZERO) or (isinstance(sel, int) and 0 <= sel < len(self.cols)):
+            self.select(sel)
+        when = f" (saved {html.escape(saved_text)})" if saved_text else ""
+        self.restore_note.value = _note(f"continued from your last state in this browser{when} "
+                                        "(a CIF's atoms are not remembered)", "#282")
+        self.restore_box.layout.display = "flex"
+
+    def _start_fresh(self, _b=None):
+        self._forget = True
+        self.restore_note.value = _note("forgetting the remembered state, the page reloads ...", "#a60")
+        self.push_view()
 
     def _on_make(self, _b=None):
         cfg = self.current_config()
