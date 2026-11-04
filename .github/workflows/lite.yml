@@ -28,6 +28,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+      # voici builds the browser's Python environment with micromamba
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: none
       - run: lite/build.sh
       - uses: actions/upload-pages-artifact@v3
         with:
