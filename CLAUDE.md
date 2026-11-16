@@ -3,9 +3,12 @@
 Interactive prep tools for the Bernina endstation (SwissFEL), published on
 mybinder.org so users need no local install.
 
-`apps/` holds the thin widget notebooks (calculations live in `bernina_prep/`).
-`apps/dev/` holds work in progress — same rules apply, it is just not linked
-from the README yet.
+`apps/` holds the thin notebooks: an introduction and a cell that shows an app.
+Everything else lives in `bernina_prep/`, where it can be imported and tested:
+calculations (`diffraction`, `crystal`, `grazing`, `timing`, `beamsize`,
+`thc_angles`) and the widget apps built on them (`reflections_app`, and the
+app classes in `thc_angles`/`beamsize`). Work in progress can go to
+`apps/dev/` (same rules, not linked from the README).
 
 ## Repo layout and environments
 
@@ -75,8 +78,15 @@ default) so a failing panel shows its error instead of a blank page. Leave it.
 
 ## Driving an embedded page from python
 
-`apps/diffractometer_3d.html` is a self-contained three.js page embedded via
-`<iframe srcdoc>`. A `srcdoc` iframe inherits the parent document's origin, so
+The 3D page is hklforge's `hklforge.view` (`view/viewer.html`), a
+self-contained three.js page built from any `Geometry`; the app embeds it with
+`bernina_view_page()` (Bernina geometry, detector presets, storage prefix
+`bernina-reflections` so browsers keep what they remembered) via
+`<iframe srcdoc>`. Messages come from `hklforge.view.message` in the lab
+(SwissFEL) frame - the page turns vectors into its own frame, so there is no
+`to_you()` any more. escape's `escape/bernina/diffractometer_3d.html` (and
+eco's identical copy) is the earlier You-only page, still used by eco until
+eco and escape move to hklforge's view (after the production test). A `srcdoc` iframe inherits the parent document's origin, so
 the page can simply **read a hidden element the notebook writes into**
 (`#diff3d-payload`, polled every 150 ms) — no custom widget, no `postMessage`
 plumbing, and the page stays fully usable standalone because the read just
@@ -85,69 +95,106 @@ fails silently. Every push includes a changing counter so repeats are ignored.
 The reverse direction works the same way: python cannot read the page, so to
 save the page's own display settings the page **writes into the parent DOM**.
 The config download link carries python's part of the config
-(`#diff3d-config-download`, base64 JSON in `data-cfg`) and the page keeps its
-`href` rewritten with the current `display` block. On load, `display` rides on
+(`#diff3d-config-download`, base64 JSON in `data-cfg`, `data-display="0"`
+to leave the display out) and the page keeps its `href` rewritten with the
+current `display` block; "download" pushes a new `download` number and the
+page clicks the link (not on the first payload a reloaded page reads). The
+same state goes to the browser history as a snapshot of kind "config". On load, `display` rides on
 exactly one push so later pushes do not reset the user's toggles.
 
 Clicking a pandas DataFrame's rows is browser text selection and **cannot**
 reach python. To make solutions selectable, the table is rendered as HTML with
 a row of `Button`s acting as column headers.
 
-## Diffraction conventions (bernina_prep.diffraction)
+## Where the code lives
 
-- The beamline calls the out-of-plane detector circle **gamma**; diffcalc calls
-  it `nu`. The library translates at its boundary — callers only see `gam`/`gamma`.
-- **Lab axes: the apps speak SwissFEL, diffcalc speaks its own.** Same
-  right-handed frame, cyclically relabelled:
+The calculations are not in this repo any more (2026-11):
 
-  | | x | y | z |
-  |---|---|---|---|
-  | diffcalc | +x | +y | +z |
-  | SwissFEL | +y | +z | +x |
+- **hklforge** (`~/mypy/hklforge`, PyPI `hklforge`): the angle solver, and
+  `hklforge.crystal` (cells, all space groups with absences and reasons,
+  CIF, structure factors, reflection lists and groups), `hklforge.orient`
+  (U from orientations), `Geometry.detector_towards`. Tests there compare
+  with gemmi and diffcalc.
+- **escape** (`~/mypy/escape-fel`, PyPI `escape-fel`): `escape.bernina` -
+  the Bernina geometry (`geometry`), `diffraction` (Sample, tables, two
+  reflections, detector maps, the 3D page's message), `recspace` (eco's
+  RecSpace form), `detectors`, `detector_view`, `otti` (geometry only) and
+  the 3D page `diffractometer_3d.html` (`escape.bernina.VIEWER_HTML`).
+  Tests in `tests/bernina/` there, including the diffcalc battery
+  (`check_engine.py`). `import escape` is lazy, so `escape.bernina` needs no
+  dask: Binder (postBuild) and the browser build install escape-fel with
+  `--no-deps`.
+- here: the apps and widgets, `crystal.py` (names over `hklforge.crystal`),
+  `grazing.py`, `timing.py`, `beamsize.py`, `thc_angles.py`, the Otti panel,
+  `presets.json`.
+- eco uses the same `escape.bernina.recspace` (`eco/utilities/recspace_calc.py`
+  re-exports it, with a temporary local fallback until escape is deployed).
 
-  So diffcalc x is SwissFEL y (vertical), diffcalc y is SwissFEL z (beam), and
-  diffcalc z is SwissFEL x (horizontal transverse). `swissfel_to_diffcalc()` /
-  `diffcalc_to_swissfel()` in `bernina_prep.diffraction` do the mapping; it is a
-  pure rotation (determinant +1), so nothing about handedness changes.
+A change to a calculation or to the 3D page goes to hklforge/escape; for a
+local test install them editable into the pixi envs
+(`.pixi/envs/<env>/bin/python -m pip install --no-deps -e ../hklforge -e ../escape-fel`)
+and build the browser version with `HKLFORGE=... ESCAPE=... lite/build.sh`.
+Binder and the Pages build take the released versions (hklforge >= 0.2.0,
+escape-fel >= 0.2.19, the first with escape.bernina).
 
-  Convert **lab-frame directions only**. An `(h,k,l)` is a reciprocal-lattice
-  index and carries no lab frame, so it is never converted — which is why the
-  surface normal, entered as `(h,k,l)`, is frame-independent while the xyz half
-  of an orientation line is not.
+## Diffraction conventions (escape.bernina.diffraction)
 
-  `build_ubcalc(..., frame=...)` takes `"swissfel"` or `"diffcalc"`. The default
-  is **`"diffcalc"`** so old callers keep their exact meaning; the apps pass
-  `frame="swissfel"` (`apps/diffraction_reflections.ipynb` since its promotion
-  from `apps/dev` on 2026-10-22). Whenever an app is converted, translate its
-  default orientations too rather than leaving the numbers and silently
-  changing what they mean — the check is that UB comes out identical (it did:
-  diffcalc `(1,1,1) > (0,0,1)`, `(1,1,-1) > (1,0,0)` = SwissFEL
-  `(1,1,1) > (1,0,0)`, `(1,1,-1) > (0,1,0)`, bit-identical UB).
-
-  The 3D scene is built on diffcalc axes with only the on-screen axis arrows
-  and labels relabelled to SwissFEL, which is why it already looked right
-  before the inputs were converted.
-- **The surface normal sets two diffcalc vectors**, `n_hkl` (reference:
-  alpha, beta, psi, naz) and `surf_nhkl` (surface: betain, betaout).
-  `build_ubcalc` sets both from the one box. Setting only `n_hkl` left
-  `surf_nhkl` at diffcalc's default (phi-frame z), which made betain/betaout
-  unrelated to the sample — sign-flipped where the real normal lands on −z.
-  Check: betain == alpha and betaout == beta for every branch.
-- **diffcalc-core's `UB` uses the 2π convention**: `|a*| = 2π/a` and
-  `|UB @ (h,k,l)| = 2π/d`. Anything drawn alongside it (k, k′, Q) must use
-  `|k| = 2π/λ` or Q will not land on a reciprocal lattice node. `k_magnitude()`
-  exists so this lives in one place.
-- `en2lam` is inlined (same expression *and operation order* as
-  xrayutilities', so results are bit-identical) to keep xrayutilities out of
-  the Binder image. Operation order matters: the naive reordering differs by
-  1 ULP at 20 keV.
-- The 3D scene's rotation chains were checked numerically against diffcalc, not
-  assumed: sample `Rx(mu)·Rz(-eta)·Ry(chi)·Rz(-phi)` equals `MU@ETA@CHI@PHI`,
-  and detector gamma-outer/delta-inner equals `NU@DELTA`, over random
-  orientations and every solved branch. Re-run those checks if the scene's
-  nesting or `ANGLE_SIGN` is touched.
+- **One lab frame**, SwissFEL/Bernina: z+ beam, y+ up, x+ = y × z (left,
+  looking along the beam). The diffcalc version of the app relabelled to
+  diffcalc's axes internally; there is no such second frame any more.
+  `GEOMETRY` is hklforge's builtin `psic` turned into this frame.
+- The out-of-plane detector circle is **gamma** (diffcalc: `nu`).
+  `LEGACY_NAMES` maps `gam`/`nu` when reading old configs; `mu_is_gam` is
+  not supported by hklforge and is dropped with a note.
+- **Surface normal and reference are separate** (h,k,l) fields: the surface
+  normal drives betain/betaout/bin_eq_bout, the reference (default (1 0 0),
+  as eco and diffcalc) alpha/beta/psi/naz. The diffcalc version set both
+  from the surface-normal box, so `apply_config` copies the normal into the
+  reference when it loads a version-1 file. The surface normal may be
+  empty; then betain etc. raise a clear error.
+- **UB** in the 2π convention (`|UB h| = 2π/d`, `|k| = 2π/λ`), from the
+  first two orientations (Busing & Levy, the first exact) or one (smallest
+  rotation from U = 1). Orientations are at all angles 0; lab directions
+  may be words (`beam`, `up`, `x+`).
+- The 3D page (hklforge.view) builds its circles from `dif.GEOMETRY` and
+  takes UB, surface normal (`nPhi`) and reference (`refPhi`) in the lab
+  frame. Virtual angles, Brillouin-zone special points (`hklforge.crystal.bz`)
+  and circle axes are drawn by the page; the geometry tab (tools) is
+  hklforge's `GeometryExplorer`, built when first opened (second page).
+- **Degenerate** modes (a continuum, e.g. Q along the phi axis with phi
+  free) come back from hklforge as `Degenerate`; `Sample.solve` turns that
+  into a ValueError the app shows. diffcalc returns arbitrary members of
+  the continuum there, so those cases are excluded from the comparison.
+- **Filters**: a circle's min/max with both bounds may match at ±360 (as
+  eco's solution ranges); one-sided bounds and virtual angles compare as is.
+- **THC apertures**: `thc_angles.aperture_check` uses the envelopes'
+  (gamma, delta) as the diffractometer's own gamma/delta (the THC app says
+  so), with (gamma, delta) ≡ (gamma + 180, 180 − delta). Otti is left out:
+  its precomputed envelope is a single curve without a stated inside.
+- **xraydb is optional**: without it there are no structure factors and
+  grazing incidence needs δ and β typed in.
+- **Browser memory**: the 3D page keeps the app's state, snapshots and the
+  remember switch in localStorage (`bernina-reflections-state`,
+  `-snapshots`, `-remember`); the app talks to it through hidden text
+  widgets and numbered `msg.memory.ops` (see the comments in the page and
+  in `reflections_app.py`).
 
 ## Testing
+
+Unit tests (no browser) — the explicit interpreter and PYTHONPATH matter at
+PSI, where `bernina_prep` is not installed:
+
+```bash
+PYTHONPATH=$PWD /mnt/app/python/.pixi/envs/bpy312/bin/python -m pytest tests -q
+```
+
+Simpler: the pixi test env (`.pixi/envs/test/bin/python -m pytest tests`),
+with hklforge and escape installed as above.
+
+Under voila, Lumino tab bars ignore synthetic `.click()`; switch tabs with
+real mouse events (CDP `Input.dispatchMouseEvent`). A button inside a hidden
+tab still fires, but its output is not in `innerText` until the tab shows.
+
 
 Build the Binder environment the way repo2docker does — the two-step is what
 catches a dependency that would downgrade the server stack:
@@ -208,11 +255,11 @@ What is and is not trustworthy:
   along SwissFEL y. In the scene's local frame that is local Z and local X
   respectively (local Y is the arm), so the box is
   `BoxGeometry(height, thickness, width)` - easy to get backwards.
-- **Beamline presets** live in `apps/bernina_parameters/*.json` and are offered
-  in a dropdown whose labels are derived from the filenames
-  (`Bernina_THC_diffraction_config.json` -> "Bernina THC"). They apply only the
-  `angles`, `fixed` and `filters` groups, deliberately leaving the sample and
-  hkl alone. Applying a whole config writes many widgets, each of which would
+- **Beamline setups** live in `bernina_prep/presets.json`, in exactly the
+  names and format of eco's `CONSTRAINT_PRESETS` (`set_constraints`): held
+  constraints plus solution ranges. Keep the two in step. Loading one
+  applies only the constraints and min/max, deliberately leaving the sample
+  and hkl alone. Applying a whole config writes many widgets, each of which would
   fire its own solve - suspend solving during the batch and run exactly one
   afterwards (`_suspend` in the app).
 - `FileUpload` and `data:` URI download links both work under voila, so config

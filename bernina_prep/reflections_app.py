@@ -3,8 +3,12 @@
 ``ReflectionsApp().ui`` is the whole interface: sample and constraint
 inputs, the solutions table, the 3D view and the tools (reflection table,
 reachable reflections, detector map, crystal and grazing-incidence checks).
-All calculations are in ``bernina_prep.diffraction``, ``crystal``,
-``grazing`` and ``thc_angles``; this module only builds and wires widgets.
+The calculations are escape's ``escape.bernina`` (``diffraction``,
+``detector_view``) and hklforge's (``crystal`` here wraps
+``hklforge.crystal``; Brillouin-zone points, the solution scan), plus
+``grazing`` and ``thc_angles``; the 3D view is hklforge's
+(``hklforge.view``) with the Bernina geometry; this module only builds and
+wires widgets.
 
 Rules that keep it rendering under voila: px sizes only, core
 widgets only, explicit flex basis for an Output beside something, no LaTeX
@@ -13,24 +17,46 @@ in descriptions, no blocking in callbacks.
 from __future__ import annotations
 
 import base64
+import contextlib
 import html
+import io
 import json
+from datetime import datetime
 from pathlib import Path
 
 import ipywidgets as widgets
 import numpy as np
 import pandas as pd
-from IPython.display import display
+from hklforge import Diffractometer
+from hklforge.crystal import bz as hbz
+from hklforge.view import iframe as view_iframe
+from hklforge.view import message as view_message
+from hklforge.view import page as view_page
+from hklforge.view import payload_html
+from hklforge.virtual import virtual_angles
+
+from escape.bernina import detector_view as dv
+from escape.bernina import diffraction as dif
 
 from bernina_prep import crystal as cry
-from bernina_prep import detector_view as dv
-from bernina_prep import diffraction as dif
 from bernina_prep import grazing as gra
 from bernina_prep.mpl_widget import FigureWidget
 
 HERE = Path(__file__).resolve().parent
-VIEWER_HTML = HERE / "diffractometer_3d.html"
 PRESETS_JSON = HERE / "presets.json"
+
+# The 3D view: hklforge's page with the Bernina geometry (SwissFEL frame,
+# gamma for nu). The storage prefix keeps what browsers remembered with the
+# earlier page (bernina-reflections-state, -snapshots, -remember).
+VIEW_ID = "diff3d"
+VIEW_STORAGE = "bernina-reflections"
+VIEW_TITLE = "Bernina diffractometer (You geometry, SwissFEL frame)"
+
+
+def bernina_view_page() -> str:
+    """The 3D page (HTML text) with Bernina's geometry and detectors built in."""
+    return view_page(dif.GEOMETRY, view_id=VIEW_ID, storage=VIEW_STORAGE, title=VIEW_TITLE,
+                     detectors=[[k, v[0], v[1]] for k, v in dif.DETECTOR_PRESETS.items()])
 
 L = widgets.Layout
 UC_W, FIELD_W, FILTER_W, HKL_W, LABEL_W = "150px", "86px", "52px", "98px", "70px"
@@ -38,7 +64,8 @@ ROW_LABEL_W, COL_W = 70, 84
 SELECTED_BG = "#cfe8fb"
 HKL_DECIMALS = 4
 INPUT_W = "420px"
-SEL_CONFIG, SEL_ZERO = "config", "zero"
+SEL_CONFIG, SEL_ZERO = "config", "zero"          # keys kept for stored states
+POSITION_NAMES = {SEL_CONFIG: "constraint configuration", SEL_ZERO: "zero position"}
 
 DEFAULT_SAMPLE = {
     "uc_a": 5.431, "uc_b": 5.431, "uc_c": 5.431, "uc_alpha": 90.0, "uc_beta": 90.0, "uc_gamma": 90.0,
@@ -46,6 +73,14 @@ DEFAULT_SAMPLE = {
     "orientations": "(1,1,1) > (1,0,0)\n(1,1,-1) > (0,1,0)",
 }
 DEFAULT_HELD = {"eta": 0.0, "chi": 0.0, "phi": 0.0}
+
+TABLE_GROUPS = {
+    "": "no grouping",
+    "sym": "symmetry-equivalent (same family)",
+    "phi": "same |Q| and angle to the phi axis",
+    "surface": "same |Q| and angle to the surface normal",
+    "dir": "same |Q| and angle to a direction",
+}
 
 HELP_HTML = """
 <div style="font-size:12.5px;line-height:1.45;max-width:1100px">
@@ -66,19 +101,30 @@ reference sets alpha/beta/psi. Leave the surface normal empty if there is none.<
 
 <p><b>Crystal.</b> A hexagonal or trigonal cell given by a and c has gamma = 120 &mdash;
 <i>crystal system</i> fills the angles in. The <i>space group</i> (or a CIF file)
-lets the app warn when the target reflection is forbidden and list the allowed
-ones; with a CIF also their intensities.</p>
+lets the app warn when the target reflection is forbidden (and by which centring,
+screw axis or glide plane) and list the allowed ones; with a CIF also |F| and
+|F|<sup>2</sup>, including f&prime; and f&Prime; at the chosen energy. The angles table
+(tools) can list all allowed reflections and group them: symmetry-equivalent ones, or
+those a rotation about the phi axis, the surface normal or a direction maps onto each
+other, with the rotation (for phi: the change of phi) between them.</p>
 
 <p><b>Solving.</b> Tick <i>fix</i> for the three angles you hold (circles and/or
 virtual angles under <i>more constraints</i>); the others follow. Each solution
 branch is a column. <i>min/max</i> drop branches outside a range; a circle with
 both bounds may be shifted by 360. <i>two reflections</i> holds a second reflection
-in Bragg condition too (it counts as one constraint).</p>
+in Bragg condition too (it counts as one constraint). The table then adds the angle
+between the two scattering vectors and between their outgoing beams, and, for the
+reflection the detector is not on, where gamma and delta would put it there with the
+virtual angles of that reflection (2theta, qaz, beta, betaout, psi, tau, omega; the
+sample angles, alpha, betain and naz are the same for both). The 3D view draws that
+second detector position translucent, with its own cut of the Ewald sphere.</p>
 
-<p><b>3D view.</b> Click a solution column to drive the drawing. <b>config</b> shows
-the angle values entered under <i>angles</i>, whether or not they solve anything,
-and the line under the table says which (h,k,l) is in Bragg condition there
-&mdash; a simulator for any position. <b>zero</b> sets every circle to 0. The view's
+<p><b>3D view.</b> Click a solution column to drive the drawing. <b>constraint
+configuration</b> shows the angle values entered under <i>angles</i> (also the values of
+the held constraints), whether or not they solve anything, and the line under the table
+says which (h,k,l) is in Bragg condition there &mdash; a simulator for any position.
+<b>zero position</b> sets every circle to 0, where the orientation ((h k l) &gt; lab
+direction) is defined. The view's
 panel has the reciprocal vectors, the reciprocal cell, the Ewald sphere and the
 patch of it the detector sees.</p>
 
@@ -95,7 +141,10 @@ crossings; hover or click for the values at a point; <i>crystal</i> lists the al
 <p><b>Config.</b> <i>load setup</i> applies a Bernina setup (held angles and ranges,
 the same as eco's <code>set_constraints</code>); <i>store config&hellip;</i> writes the
 inputs to a JSON file, <i>load config</i> reads one back (also files of the
-earlier diffcalc version).</p>
+earlier diffcalc version). <i>In this browser</i>: the app remembers its state
+(switch it off there) and keeps snapshots - take named ones, or go back to an
+automatic one (last session, every 10 minutes, before "start fresh" or a
+restore); each can be downloaded as a config file. Nothing leaves the browser.</p>
 </div>
 """
 
@@ -124,9 +173,97 @@ def _note(text, color="#a60"):
 
 
 def _show_df(out, df, floatfmt="{:.3f}", max_rows=200):
-    with out:
-        with pd.option_context("display.float_format", floatfmt.format, "display.max_rows", max_rows):
-            display(df)
+    out.show_df(df, floatfmt, max_rows)
+
+
+def _progress_bar():
+    return widgets.IntProgress(value=0, min=0, max=1, layout=L(width="220px", display="none"))
+
+
+@contextlib.contextmanager
+def _working(area, button=None, progress=None, text="computing ..."):
+    """While a tool runs: a "computing" line, its button disabled, and a
+    progress bar the tool advances with the ``step(i, n)`` this yields."""
+    area.busy(text)
+    if button is not None:
+        button.disabled = True
+
+    def step(i, n):
+        if progress is not None:
+            progress.max, progress.value = max(n, 1), i
+            progress.layout.display = ""
+
+    try:
+        yield step
+    finally:
+        area.done()
+        if button is not None:
+            button.disabled = False
+        if progress is not None:
+            progress.layout.display = "none"
+
+
+class ResultArea:
+    """Where a tool writes its result: an HTML widget whose value is set
+    directly - ``with area: print(...)`` collects text, ``show_df`` adds a
+    table, ``figure`` an image, ``busy`` a "computing" line.
+
+    Not an Output widget: in the browser version (xeus-python) output printed
+    from a button callback never reaches an Output widget, so the tools
+    seemed to do nothing. Setting a widget's value works in every front-end.
+    """
+
+    def __init__(self, layout=None):
+        self.widget = widgets.HTML(layout=layout or L(width="100%"))
+        self._parts = []
+        self._busy = ""
+
+    def _render(self):
+        self.widget.value = self._busy + "".join(self._parts)
+
+    def clear_output(self):
+        self._parts = []
+        self._render()
+
+    def busy(self, text="computing ..."):
+        """A "computing" line above the results, until ``done``."""
+        self._busy = f'<div style="font-size:12px;color:#a60">&#8987; {html.escape(text)}</div>'
+        self._render()
+
+    def done(self):
+        self._busy = ""
+        self._render()
+
+    def add_html(self, fragment: str):
+        self._parts.append(fragment)
+        self._render()
+
+    def __enter__(self):
+        self._buf = io.StringIO()
+        self._redirect = contextlib.redirect_stdout(self._buf)
+        self._redirect.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        self._redirect.__exit__(*exc)
+        text = self._buf.getvalue()
+        if text:
+            self.add_html('<pre style="font-size:12px;margin:2px 0;white-space:pre-wrap">'
+                          f'{html.escape(text.rstrip())}</pre>')
+        return False
+
+    def show_df(self, df, floatfmt="{:.3f}", max_rows=200):
+        with pd.option_context("display.max_rows", max_rows):
+            table = df.to_html(float_format=floatfmt.format, max_rows=max_rows, border=0, na_rep="")
+        self.add_html('<div style="overflow-x:auto;font-size:12px" class="bernina-table">'
+                      '<style>.bernina-table table{border-collapse:collapse}.bernina-table th,'
+                      '.bernina-table td{padding:1px 6px;text-align:right;white-space:nowrap}'
+                      '.bernina-table tr:nth-child(even){background:#f6f8fa}</style>' + table + "</div>")
+
+    def figure(self, fig, dpi=90):
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        self.add_html(f'<img src="data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}">')
 
 
 def load_presets(path=PRESETS_JSON) -> dict:
@@ -170,6 +307,10 @@ class ReflectionsApp:
         self.display_settings = None
         self._restore_done = False  # until the 3D page has offered the state it remembers
         self._forget = False
+        self._memory_ops = []       # snapshot requests for the 3D page, numbered (see push_view)
+        self._memory_seq = 0
+        self._memory_loading = False
+        self.snapshots = []         # as the 3D page reports them (oldest first)
         self.results = {}           # last result of each tool, also for scripts and tests
         self.presets = load_presets(presets_path)
         self._build_inputs()
@@ -207,9 +348,9 @@ class ReflectionsApp:
                                         placeholder="for alpha, beta, psi", layout=L(width="360px"),
                                         style={"description_width": "160px"})
         self.ctrl["orientations"] = w.Textarea(
-            value=s["orientations"], description="orientations (h,k,l) > lab",
+            value=s["orientations"], description="orientations (h,k,l) > lab@zero angles",
             placeholder='one "(h,k,l) > (x,y,z)" per line; or > beam, > up, > x+',
-            layout=L(width="360px", height="66px"), style={"description_width": "150px"})
+            layout=L(width="410px", height="66px"), style={"description_width": "200px"})
 
         for n in "hkl":
             self.ctrl[n] = w.FloatText(value=1.0, step=0.1, description=n, layout=L(width=HKL_W),
@@ -266,8 +407,30 @@ class ReflectionsApp:
             w.HBox([c["h"], c["k"], c["l"]]), w.HBox([c["energy"], self.energy_slider]), self.target_msg,
             w.HTML("<b>two reflections</b>"), c["two"], w.HBox([c["h2"], c["k2"], c["l2"]]), c["detector"],
         ])
+        # scan one held value: how many solutions (passing the min/max) along it
+        self.s_name = w.Dropdown(options=[("(hold a value first)", "")], description="scan",
+                                 layout=L(width="200px"), style={"description_width": "36px"})
+        self.s_from = w.FloatText(value=-180.0, description="from", layout=L(width="120px"),
+                                  style={"description_width": "36px"})
+        self.s_to = w.FloatText(value=180.0, description="to", layout=L(width="110px"),
+                                style={"description_width": "22px"})
+        self.s_steps = w.BoundedIntText(value=181, min=3, max=2001, description="points",
+                                        layout=L(width="130px"), style={"description_width": "46px"})
+        self.s_btn = w.Button(description="scan", button_style="primary", layout=L(width="70px"),
+                              tooltip="solve at every point and plot how many solutions pass the min/max")
+        self.s_figure = FigureWidget((4.6, 2.3))
+        self.s_fig = self.s_figure.fig
+        self.s_msg = w.HTML()
+        self._scan = None                 # (name, values, counts) of the last scan
+        self.scan_box = w.VBox([
+            w.HTML('<div style="font-size:13px;font-weight:600;margin-top:10px">scan a held value</div>'
+                   '<div style="font-size:11px;color:#666;width:400px">steps one held angle and counts the '
+                   'solutions passing the min/max at each value. Click in the plot to set the angle to '
+                   'that value.</div>'),
+            w.HBox([self.s_name, self.s_btn]), w.HBox([self.s_from, self.s_to, self.s_steps]),
+            self.s_msg, self.s_figure.widget], layout=L(border_top="1px solid #ddd", margin="10px 0 0 0"))
         self.tab_angles = w.VBox([header] + [self.angle_rows[n] for n in dif.CIRCLES]
-                                 + [self.more_constraints, self.held_msg])
+                                 + [self.more_constraints, self.held_msg, self.scan_box])
 
     # ================================================================ config
 
@@ -287,7 +450,10 @@ class ReflectionsApp:
         self.include = {k: w.Checkbox(value=True, description=t, indent=False, layout=L(width="360px"))
                         for k, t in self.include_groups}
         self.store_btn = w.Button(description="store config…", layout=L(width="130px"))
-        self.make_btn = w.Button(description="create file", button_style="primary", layout=L(width="110px"))
+        self.make_btn = w.Button(description="download", icon="download", button_style="primary",
+                                 layout=L(width="120px"),
+                                 tooltip="write the file and download it (also kept in this browser's history)")
+        self._downloads = 0               # numbers the downloads the 3D page starts (push_view)
         self.file_name = w.Text(value="bernina_diffraction_config", description="file name",
                                 layout=L(width="330px"), style={"description_width": "70px"})
         self.upload = w.FileUpload(accept=".json", multiple=False, description="load config",
@@ -300,26 +466,59 @@ class ReflectionsApp:
             + [self.include[k] for k, _ in self.include_groups]
             + [self.file_name, self.make_btn, self.download_link],
             layout=L(display="none", border="1px solid #ddd", padding="6px", margin="4px 0 0 0"))
+        # kept in this browser (the 3D page does the storing, see restore/snapshots below)
+        self.remember = w.Checkbox(value=True, indent=False, layout=L(width="auto"),
+                                   description="remember my state in this browser, with automatic snapshots")
+        self.snap_name = w.Text(placeholder="snapshot name (optional)", layout=L(width="220px"))
+        self.snap_btn = w.Button(description="take snapshot", icon="camera", layout=L(width="130px"))
+        self.snap_list = w.Dropdown(options=[("(no snapshots yet)", "")], layout=L(width="360px"))
+        self.snap_restore = w.Button(description="restore", layout=L(width="80px"))
+        self.snap_delete = w.Button(description="delete", layout=L(width="70px"))
+        self.snap_download = w.HTML()
+        self.fresh_btn2 = w.Button(description="start fresh", layout=L(width="110px"),
+                                   tooltip="reload with the defaults (the current state is kept as a snapshot)")
+        self.forget_btn = w.Button(description="forget everything", layout=L(width="140px"),
+                                   tooltip="delete the remembered state and every snapshot in this browser")
+        self.memory_msg = w.HTML(_note("waiting for the 3D view, which keeps them ...", "#888"))
+        self.memory_box = w.VBox(
+            [w.HTML('<div style="font-size:13px;font-weight:600;margin-top:10px">in this browser</div>'
+                    '<div style="font-size:11px;color:#666;max-width:560px">kept in this browser\'s '
+                    'storage for this web address only, never sent anywhere; a backup in case nobody '
+                    'stored a file. Automatic snapshots: the last session\'s state when a new one starts, '
+                    'every 10 minutes of work, before "start fresh" and before a restore (the newest 20). '
+                    'Every config file you download is kept here too ("config:", with its date), so '
+                    'it can be restored from this list.'
+                    '</div>'),
+             w.HBox([self.remember]),
+             w.HBox([self.snap_name, self.snap_btn]),
+             w.HBox([self.snap_list, self.snap_restore, self.snap_delete]),
+             self.snap_download,
+             w.HBox([self.fresh_btn2, self.forget_btn]),
+             self.memory_msg],
+            layout=L(border_top="1px solid #ddd", margin="10px 0 0 0"))
+        self._set_memory_enabled(False)
         self.tab_config = w.VBox([self.preset, self.preset_msg, w.HBox([self.store_btn, self.upload]),
-                                  self.store_panel, self.config_msg])
+                                  self.store_panel, self.config_msg, self.memory_box])
 
     # ================================================================ solutions, view
 
     def _build_solutions(self):
         self.solution_buttons = widgets.HBox([])
+        # the two positions that are not solutions, on their own row above them
+        self.position_buttons = widgets.HBox([], layout=L(margin="0 0 4px 0"))
         self.table_html = widgets.HTML()
         self.solve_msg = widgets.HTML()
         self.config_hkl = widgets.HTML()
 
     def _build_view(self):
-        self.view_frame = widgets.HTML(
-            f'<iframe srcdoc="{html.escape(VIEWER_HTML.read_text())}" '
-            'style="width:100%; height:760px; border:1px solid #ddd;"></iframe>', layout=L(width="100%"))
+        self.view_frame = widgets.HTML(view_iframe(bernina_view_page(), 760, VIEW_ID), layout=L(width="100%"))
+        self._bz_key, self._bz = None, None
         self.payload_holder = widgets.HTML()
         # the 3D page writes its detector choice here (see its sendDetector)
         self.det_from_view = widgets.Text(layout=L(display="none"))
         self.det_from_view.add_class("diff3d-detector-in")
-        # ... and, once, the state it remembers from the last session in this browser
+        # ... and what it keeps in this browser: once the state it remembers from the
+        # last session ({"kind": "offer"}), then the snapshots whenever they change
         self.state_from_view = widgets.Text(layout=L(display="none"))
         self.state_from_view.add_class("diff3d-state-in")
 
@@ -331,9 +530,33 @@ class ReflectionsApp:
         self.t_hkls = w.Textarea(value="1,1,1\n2,2,0\n3,1,1\n0,0,4", description="h,k,l list",
                                  layout=L(width="220px", height="120px"))
         self.t_sol = w.IntText(value=0, description="solution #", layout=L(width="170px"))
+        self.t_source = w.Dropdown(options=[("allowed reflections down to d min", "all"), ("the h,k,l list", "list")],
+                                   description="reflections", layout=L(width="330px"),
+                                   style={"description_width": "70px"})
+        self.t_dmin = w.FloatText(value=1.5, description="d min [Å]", layout=L(width="150px"),
+                                  style={"description_width": "64px"})
+        self.t_max = w.IntText(value=100, description="at most", layout=L(width="130px"),
+                               style={"description_width": "52px"})
+        self.t_group = w.Dropdown(options=[(label, key) for key, label in TABLE_GROUPS.items()],
+                                  description="group", layout=L(width="330px"), style={"description_width": "70px"})
+        self.t_dir = w.Text(value="[0 0 1]", placeholder="[u v w] or (h k l)", layout=L(width="110px", display="none"),
+                            tooltip="a real-space direction [u v w] or the normal of the planes (h k l)")
+        self.t_one = w.Checkbox(value=False, description="one row per group", indent=False, layout=L(width="auto"))
         self.t_btn = w.Button(description="compute table", button_style="primary")
-        self.t_out = w.Output()
-        tool_table = w.VBox([w.HBox([self.t_hkls, self.t_sol]), self.t_btn, self.t_out])
+        self.t_progress = _progress_bar()
+        self.t_out = ResultArea()
+        tool_table = w.VBox([
+            w.HBox([self.t_source, self.t_dmin, self.t_max], layout=L(flex_flow="row wrap")),
+            w.HBox([self.t_hkls, self.t_sol]),
+            w.HBox([self.t_group, self.t_dir, self.t_one], layout=L(flex_flow="row wrap", align_items="center")),
+            w.HBox([self.t_btn, self.t_progress], layout=L(align_items="center")),
+            w.HTML('<div style="font-size:11px;color:#666;white-space:normal;line-height:1.3;width:640px">'
+                   'one row per reflection at the solution # among those passing the min/max. With a space '
+                   'group: allowed and why not; with a CIF: |F|, |F|² (with f′, f″ at this energy) and I rel. '
+                   '<i>Same |Q| and angle to an axis</i>: reflections a rotation about it maps onto each other '
+                   '(same 2θ, same exit direction relative to the axis); Δ is the turn about the axis (for '
+                   'phi: the change of phi) that brings each to where the group\'s first one is.</div>'),
+            self.t_out.widget])
 
         # reachable reflections
         self.r_source = w.Dropdown(options=[("allowed reflections of the crystal", "allowed"),
@@ -352,12 +575,13 @@ class ReflectionsApp:
                                     layout=L(width="300px"), style={"description_width": "80px"})
         self.r_only = w.Checkbox(value=False, description="only reachable", indent=False)
         self.r_btn = w.Button(description="check", button_style="primary")
-        self.r_out = w.Output()
+        self.r_progress = _progress_bar()
+        self.r_out = ResultArea()
         tool_reach = w.VBox([self.r_source, w.HBox([self.r_dmin, self.r_max]),
-                             w.HBox([self.r_aperture]), self.r_beta, w.HBox([self.r_btn, self.r_only]),
+                             w.HBox([self.r_aperture]), self.r_beta, w.HBox([self.r_btn, self.r_only, self.r_progress], layout=L(align_items="center")),
                              w.HTML('<span style="font-size:11px;color:#666">uses the constraints, the '
                                     'min/max and the energy above; THC envelopes from the THC app</span>'),
-                             self.r_out])
+                             self.r_out.widget])
 
         # detector
         self.d_preset = w.Dropdown(options=list(dif.DETECTOR_PRESETS), description="detector",
@@ -383,7 +607,7 @@ class ReflectionsApp:
         self.d_readout = w.HTML(layout=L(min_height="18px", width="720px"))
         self.d_figure = FigureWidget((7.0, 4.5))
         self.d_fig, self.d_canvas, self.d_plot = self.d_figure.fig, self.d_figure.canvas, self.d_figure.widget
-        self.d_out = w.Output(layout=L(flex="1 1 380px"))
+        self.d_out = ResultArea(layout=L(flex="1 1 380px"))
         self._det = None             # (pose, grid, spots, allowed, label) of the last map
         tool_det = w.VBox([self.d_preset, w.HBox([self.d_dist, self.d_tol]), w.HBox([self.d_w, self.d_h]),
                            w.HBox([self.d_res, self.d_btn, self.d_follow]),
@@ -395,18 +619,18 @@ class ReflectionsApp:
                                   'button (or with each new pose when following the 3D view).</div>',
                                   layout=L(width="720px")),
                            self.d_qty, w.HBox(list(self.d_over.values()), layout=L(flex_flow="row wrap", width="720px")),
-                           self.d_plot, self.d_readout, self.d_out], layout=L(width="100%"))
+                           self.d_plot, self.d_readout, self.d_out.widget], layout=L(width="100%"))
 
         # crystal
         self.c_dmin = w.FloatText(value=1.0, description="d min [Å]", layout=L(width="170px"),
                                   style={"description_width": "70px"})
         self.c_forbidden = w.Checkbox(value=False, description="show forbidden too", indent=False)
         self.c_btn = w.Button(description="list reflections", button_style="primary")
-        self.c_out = w.Output()
+        self.c_out = ResultArea()
         tool_crystal = w.VBox([
             w.HTML('<span style="font-size:11px;color:#666">one reflection per symmetry-equivalent set, '
                    'from the space group (and the CIF atoms for |F|); see the sample tab</span>'),
-            w.HBox([self.c_dmin, self.c_forbidden]), self.c_btn, self.c_out])
+            w.HBox([self.c_dmin, self.c_forbidden]), self.c_btn, self.c_out.widget])
 
         # grazing incidence
         self.g_formula = w.Text(value="Si", description="formula", layout=L(width="190px"),
@@ -421,17 +645,44 @@ class ReflectionsApp:
                                   style={"description_width": "70px"},
                                   tooltip="beam size in the plane of incidence")
         self.g_btn = w.Button(description="calculate", button_style="primary")
-        self.g_out = w.Output()
+        self.g_out = ResultArea()
         tool_grazing = w.VBox([w.HBox([self.g_formula, self.g_density]), w.HBox([self.g_delta, self.g_beta]),
                                self.g_beam, self.g_btn,
                                w.HTML('<span style="font-size:11px;color:#666">for the energy above and, '
                                       'if a solution is selected, its betain/betaout (needs a surface '
                                       'normal)</span>'),
-                               self.g_out])
+                               self.g_out.widget])
 
-        self.tool_tabs = w.Tab(children=[tool_table, tool_reach, tool_det, tool_crystal, tool_grazing])
-        for i, t in enumerate(("table", "reachable", "detector", "crystal", "grazing")):
+        # geometry: how a diffractometer geometry is built (hklforge's explorer),
+        # made when the tab is first opened - it carries a second 3D page
+        self.geometry_box = w.VBox([w.HTML('<span style="font-size:12px;color:#666">loading ...</span>')],
+                                   layout=L(width="100%"))
+        self.explorer = None
+
+        self.tool_tabs = w.Tab(children=[tool_table, tool_reach, tool_det, tool_crystal, tool_grazing,
+                                         self.geometry_box])
+        for i, t in enumerate(("table", "reachable", "detector", "crystal", "grazing", "geometry")):
             self.tool_tabs.set_title(i, t)
+        self.tool_tabs.observe(self._on_tool_tab, names="selected_index")
+
+    def _on_tool_tab(self, change):
+        if change["new"] == 5:
+            self.build_geometry_tab()
+
+    def build_geometry_tab(self):
+        """The geometry tab's content (once): Bernina's geometry first, then hklforge's stored ones."""
+        if self.explorer is not None:
+            return self.explorer
+        from hklforge.view.explorer import GeometryExplorer
+        self.explorer = GeometryExplorer({"bernina (You, SwissFEL frame)": dif.GEOMETRY}, view_id="geo3d",
+                                         height=560)
+        self.geometry_box.children = [
+            widgets.HTML('<div style="font-size:11px;color:#666;width:720px;white-space:normal">How a '
+                         'diffractometer geometry is built, circle by circle - Bernina\'s and others '
+                         '(from libhkl, diffcalc). For understanding only: the app solves with '
+                         'Bernina\'s geometry.</div>'),
+            self.explorer.widget]
+        return self.explorer
 
     # ================================================================ shell
 
@@ -446,7 +697,8 @@ class ReflectionsApp:
             "inputs": Panel("inputs", self.input_tabs),
             "solutions": Panel("solutions", w.VBox([
                 w.HTML('<span style="font-size:11px;color:#666">click a column to show it in the 3D view</span>'),
-                self.solve_msg, self.solution_buttons, self.table_html, self.config_hkl])),
+                self.solve_msg, self.position_buttons, self.solution_buttons, self.table_html,
+                self.config_hkl])),
             "view": Panel("3D view", w.VBox([self.view_frame, self.payload_holder, self.det_from_view,
                                              self.state_from_view])),
             "tools": Panel("tools", self.tool_tabs, is_open=False),
@@ -517,9 +769,18 @@ class ReflectionsApp:
         self.view_height.observe(lambda _c: self.push_view(), names="value")
         self.state_from_view.observe(self._state_from_view, names="value")
         self.fresh_btn.on_click(self._start_fresh)
+        self.fresh_btn2.on_click(self._start_fresh)
+        self.remember.observe(self._on_remember, names="value")
+        self.snap_btn.on_click(self._take_snapshot)
+        self.snap_list.observe(self._show_snapshot_link, names="value")
+        self.snap_restore.on_click(self._restore_snapshot)
+        self.snap_delete.on_click(self._delete_snapshot)
+        self.forget_btn.on_click(self._forget_everything)
         self.help_btn.observe(lambda c: setattr(self.help_box.layout, "display", "flex" if c["new"] else "none"),
                               names="value")
         self.t_btn.on_click(self.run_table)
+        self.t_group.observe(lambda c: setattr(self.t_dir.layout, "display", "" if c["new"] == "dir" else "none"),
+                             names="value")
         self.r_btn.on_click(self.run_reachable)
         self.d_preset.observe(self._detector_preset, names="value")
         for wid in (self.d_w, self.d_h, self.d_dist):
@@ -532,6 +793,10 @@ class ReflectionsApp:
         if self.d_canvas is not None:
             self.d_canvas.mpl_connect("button_press_event", self._detector_click)
         self.c_btn.on_click(self.run_crystal)
+        self.s_btn.on_click(self.run_scan)
+        self.s_name.observe(self._scan_defaults, names="value")
+        if self.s_figure.canvas is not None:
+            self.s_figure.canvas.mpl_connect("button_press_event", self._scan_click)
         self.g_btn.on_click(self.run_grazing)
 
     def _round_hkl(self, change):
@@ -592,6 +857,7 @@ class ReflectionsApp:
     def recompute(self, *_):
         if self._suspend:
             return
+        self._refresh_scan_names()
         self._check_crystal()
         try:
             self.sample = dif.Sample.from_text(self.cell(), self.ctrl["orientations"].value,
@@ -611,12 +877,7 @@ class ReflectionsApp:
             self._no_solutions(_err(exc))
             return
         if self.ctrl["two"].value and len(df.columns):
-            h2 = cons["h2"]
-            extra = {}
-            for c in df.columns:
-                sp = self.sample.spots(dif.solution_angles(df, c), [self.hkl(), h2], self.energy())
-                extra[c] = {"separation": sp["separation"], "tdet max [mm]": sp["tdet_max"]}
-            df = pd.concat([df, pd.DataFrame(extra)])
+            df = pd.concat([df, pd.DataFrame(self._two_reflection_rows(df, cons["h2"]))])
         self.df = df
         self.cols = [c for c in df.columns if dif.passes(df[c], self.ranges())]
         hidden = len(df.columns) - len(self.cols)
@@ -632,6 +893,46 @@ class ReflectionsApp:
             self.selected = SEL_CONFIG
         self._rebuild_buttons()
         self.select(self.selected)
+
+    def _ghost_detectors(self) -> list:
+        """For the 3D view: the detector on each reflection it is not on, for a
+        solution shown in two-reflection mode (read from the table's rows)."""
+        if not (self.ctrl["two"].value and isinstance(self.selected, int) and self.df is not None
+                and self.selected < len(self.cols)):
+            return []
+        col = self.df[self.cols[self.selected]]
+        hkls = {1: self.hkl(), 2: [float(self.ctrl[n].value) for n in ("h2", "k2", "l2")]}
+        out = []
+        for n in self._other_reflections():
+            g, d = col.get(f"gamma @{n}"), col.get(f"delta @{n}")
+            if g is not None and d is not None and np.isfinite(g) and np.isfinite(d):
+                out.append({"gamma": float(g), "delta": float(d), "which": n,
+                            "label": "(" + " ".join(f"{x:g}" for x in hkls[n]) + ")"})
+        return out
+
+    def _other_reflections(self):
+        """Which reflections (1, 2) the detector is not on, in two-reflection mode."""
+        return (2,) if self.ctrl["detector"].value == "h1" else (1, 2)
+
+    def _two_reflection_rows(self, df, h2) -> dict:
+        """Rows added per solution with two reflections: the angle between
+        them, between their outgoing beams, the largest detector distance
+        that keeps both on the face, and - for each reflection the detector
+        is not on - where the detector would sit on it and the virtual angles
+        of its outgoing beam ("<angle> @<n>"; the sample angles are shared)."""
+        h1, energy = self.hkl(), self.energy()
+        q_angle = dif.angle_between(self.sample, h1, h2)
+        rows = {}
+        for c in df.columns:
+            a = dif.solution_angles(df, c)
+            sp = self.sample.spots(a, [h1, h2], energy)
+            r = {"∠(Q1,Q2)": q_angle, "∠(k′1,k′2)": sp["separation"], "tdet max [mm]": sp["tdet_max"]}
+            for n in self._other_reflections():
+                for name, v in dif.reflection_angles(self.sample, a, (h1, h2)[n - 1], energy).items():
+                    if name != "theta" and (name in df.index or name in ("gamma", "delta")):
+                        r[f"{name} @{n}"] = v
+            rows[c] = r
+        return rows
 
     def _no_solutions(self, message):
         self.solve_msg.value = message
@@ -674,14 +975,18 @@ class ReflectionsApp:
             b.on_click(lambda _b, idx=i: self.select(idx))
             b._sel = i
             buttons.append(b)
-        config = w.Button(description="config", tooltip="show the angle values entered under 'angles'",
-                          layout=L(width=f"{ROW_LABEL_W}px", margin="0"))
+        config = w.Button(description=POSITION_NAMES[SEL_CONFIG], layout=L(width="190px", margin="0"),
+                          tooltip="the angle values entered under 'angles' (also the values of the held "
+                                  "constraints), whether or not they solve anything")
         config.on_click(lambda _b: self.select(SEL_CONFIG))
         config._sel = SEL_CONFIG
-        zero = w.Button(description="zero", tooltip="all circles at 0", layout=L(width="60px", margin="0 0 0 8px"))
+        zero = w.Button(description=POSITION_NAMES[SEL_ZERO], layout=L(width="120px", margin="0 0 0 8px"),
+                        tooltip="every circle at 0: where the orientation (h k l) > lab direction is defined")
         zero.on_click(lambda _b: self.select(SEL_ZERO))
         zero._sel = SEL_ZERO
-        self.solution_buttons.children = [config] + buttons + [zero]
+        self.position_buttons.children = [config, zero]
+        spacer = w.HTML(layout=L(width=f"{ROW_LABEL_W}px"))          # keeps them over the table's columns
+        self.solution_buttons.children = [spacer] + buttons
 
     def _render_table(self):
         if self.df is None or not self.cols:
@@ -691,28 +996,40 @@ class ReflectionsApp:
         bg = lambda i: f"background:{SELECTED_BG};" if i == sel else ""
         head = "".join(f'<th style="width:{COL_W}px;text-align:right;padding:2px 6px;border-bottom:1px solid #ccc;'
                        f'{bg(i)}">{html.escape(str(c))}</th>' for i, c in enumerate(self.cols))
-        body = []
+        body, group = [], None
+        span = len(self.cols) + 1
+        hkls = {1: self.hkl(), 2: [self.ctrl[n].value for n in ("h2", "k2", "l2")]}
         for name in df.index:
+            label, _, which = str(name).partition(" @")
+            if which and which != group:
+                group = which
+                hkl = " ".join(f"{float(x):g}" for x in hkls[int(which)])
+                body.append(f'<tr><td colspan="{span}" style="padding:6px 6px 1px;color:#555;'
+                            f'border-top:1px solid #ddd">detector on reflection {which} ({hkl}), '
+                            'same sample angles</td></tr>')
+            elif label == "∠(Q1,Q2)":
+                body.append(f'<tr><td colspan="{span}" style="padding:6px 6px 1px;color:#555;'
+                            'border-top:1px solid #ddd">both reflections</td></tr>')
             cells = "".join(f'<td style="width:{COL_W}px;text-align:right;padding:1px 6px;'
                             f'font-variant-numeric:tabular-nums;{bg(i)}">{_fmt(df.loc[name, c])}</td>'
                             for i, c in enumerate(self.cols))
             body.append(f'<tr><td style="width:{ROW_LABEL_W}px;text-align:right;padding:1px 6px;font-weight:600">'
-                        f'{html.escape(str(name))}</td>{cells}</tr>')
+                        f'{html.escape(label)}</td>{cells}</tr>')
         self.table_html.value = ('<table style="border-collapse:collapse;font-size:12px">'
                                  f'<tr><td style="width:{ROW_LABEL_W}px"></td>{head}</tr>' + "".join(body) + "</table>")
 
     def shown_angles(self):
         """(angles, label) of what the 3D view shows."""
         if self.selected == SEL_CONFIG:
-            return self.config_angles(), "config"
+            return self.config_angles(), POSITION_NAMES[SEL_CONFIG]
         if isinstance(self.selected, int) and self.df is not None and self.selected < len(self.cols):
             col = self.cols[self.selected]
             return dif.solution_angles(self.df, col), str(col)
-        return {}, "zero"
+        return {}, POSITION_NAMES[SEL_ZERO]
 
     def select(self, sel):
         self.selected = sel
-        for b in self.solution_buttons.children:
+        for b in self.position_buttons.children + self.solution_buttons.children:
             b.button_style = "info" if getattr(b, "_sel", None) == sel else ""
         self._render_table()
         self._render_config_hkl()
@@ -726,7 +1043,7 @@ class ReflectionsApp:
         h = np.round(self.sample.hkl_at(angles, self.energy()), 6) + 0.0
         near = np.round(h)
         self.config_hkl.value = (
-            '<div style="font-size:12px;margin-top:6px"><b>config</b> (the angles entered) puts '
+            '<div style="font-size:12px;margin-top:6px"><b>constraint configuration</b> (the angles entered) puts '
             f'({", ".join(f"{x:.3f}" for x in h)}) in Bragg condition; nearest '
             f'({" ".join(str(int(x)) for x in near + 0.0)}), off by {np.linalg.norm(h - near):.3f}</div>')
 
@@ -734,27 +1051,53 @@ class ReflectionsApp:
         angles, label = self.shown_angles()
         targets = [self.hkl()] + ([[float(self.ctrl[n].value) for n in ("h2", "k2", "l2")]]
                                   if self.ctrl["two"].value else [])
-        msg = dif.view_payload(self.sample, angles, self.energy(), label, targets, n=self._pushes)
+        s = self.sample
+        msg = view_message(None, dif._complete(angles), k=dif.k_magnitude(self.energy()), label=label,
+                           targets=targets, n=self._pushes, ub=None if s is None else s.UB,
+                           special_points=self._special_points())
+        if s is not None:      # sent as None too, so that emptying a field clears it in the view
+            msg["nPhi"] = None if s.n_surface is None else [float(x) for x in s.n_surface]
+            msg["refPhi"] = None if s.n_reference is None else [float(x) for x in s.n_reference]
+        if self._downloads:
+            msg["download"] = self._downloads              # the page clicks the config link once per number
         try:
             msg["centring"] = dv.lattice_centring(self.space_group())   # for the Brillouin zones
         except Exception:
             msg["centring"] = "P"
         msg["frameHeight"] = int(self.view_height.value) if hasattr(self, "view_height") else 760
+        msg["ghosts"] = self._ghost_detectors()
         if hasattr(self, "d_w"):
             msg["detectors"] = [[k, v[0], v[1]] for k, v in dif.DETECTOR_PRESETS.items()]
             msg["detector"] = {"w": float(self.d_w.value), "h": float(self.d_h.value)}
         if self.display_settings is not None:
             msg["display"] = self.display_settings          # sent once
             self.display_settings = None
+        if self._restore_done:
+            msg["memory"] = {"remember": bool(self.remember.value), "ops": list(self._memory_ops)}
         if self._forget:
             msg["forgetState"] = True
         elif self._restore_done:
             msg["autosave"] = self.autosave_state()
         self._pushes += 1
-        self.payload_holder.value = ('<span id="diff3d-payload" style="display:none">'
-                                     + html.escape(json.dumps(msg)) + "</span>")
+        self.payload_holder.value = payload_html(msg, VIEW_ID)
         if getattr(self, "d_follow", None) is not None and self.d_follow.value and self._det is not None:
             self.run_detector()
+
+    def _special_points(self) -> dict | None:
+        """Brillouin-zone special points of the cell and space group (cached), or None."""
+        key = (tuple(self.cell().values()), self.ctrl["space_group"].value.strip(),
+               None if self.structure is None else self.structure.name)
+        if key != self._bz_key:
+            try:
+                sg = self.space_group()
+                if sg is None and self.structure is not None:
+                    sg = self.structure.space_group
+                # without a space group the lattice centring, and so the points, are unknown
+                sp = None if sg is None else hbz.special_points(self.cell(), sg)
+            except Exception:
+                sp = None
+            self._bz_key, self._bz = key, sp
+        return self._bz
 
     # ================================================================ crystal inputs
 
@@ -789,12 +1132,18 @@ class ReflectionsApp:
         self.structure = st
         self._suspend = True
         try:
-            self.ctrl["space_group"].value = st.space_group.name
+            self.ctrl["space_group"].value = st.space_group.name if st.space_group is not None else ""
             self.g_formula.value = st.formula
             self.g_density.value = round(st.density, 4)
         finally:
             self._suspend = False
         self._set_cell(st.cell)
+        notes = list(st.notes)
+        if st.space_group is None:
+            notes.append("space group not recognised: |F| uses the CIF's symmetry operations, "
+                         "absences are not checked")
+        if notes:
+            self.crystal_msg.value = _note(html.escape("CIF: " + "; ".join(notes)))
 
     # ================================================================ presets and config files
 
@@ -859,19 +1208,27 @@ class ReflectionsApp:
         return state
 
     def _state_from_view(self, change):
-        if self._restore_done:
+        try:
+            report = json.loads(change["new"] or "{}")
+        except ValueError:
+            return
+        if report.get("kind") == "memory":
+            self._apply_memory_report(report)
+            return
+        if self._restore_done:                 # the offer comes once per session
             return
         self._restore_done = True
+        self._apply_memory_report(report)
         try:
-            offered = json.loads(change["new"] or "{}")
-            if offered.get("state"):
-                self.restore_state(offered["state"], offered.get("display"), offered.get("savedText", ""))
+            if report.get("state"):
+                self.restore_state(report["state"], report.get("display"), report.get("savedText", ""))
         except Exception as exc:
             self.restore_note.value = _err(f"could not restore the remembered state: {exc}")
             self.restore_box.layout.display = "flex"
         self.push_view()
 
-    def restore_state(self, state: dict, display: dict | None = None, saved_text: str = ""):
+    def restore_state(self, state: dict, display: dict | None = None, saved_text: str = "",
+                      what: str = "your last state in this browser"):
         """Apply a state from autosave_state() (and the 3D page's display settings)."""
         cfg = dict(state)
         if display:
@@ -879,12 +1236,6 @@ class ReflectionsApp:
         self._suspend = True
         try:
             self.apply_config(cfg)
-            tools = state.get("tools") or {}
-            if tools.get("detector") in dif.DETECTOR_PRESETS:
-                self.d_preset.value = tools["detector"]
-            for key, wid in (("width", self.d_w), ("height", self.d_h), ("distance", self.d_dist)):
-                if isinstance(tools.get(key), (int, float)):
-                    wid.value = tools[key]
         finally:
             self._suspend = False
         self.recompute()
@@ -892,27 +1243,153 @@ class ReflectionsApp:
         if sel in (SEL_CONFIG, SEL_ZERO) or (isinstance(sel, int) and 0 <= sel < len(self.cols)):
             self.select(sel)
         when = f" (saved {html.escape(saved_text)})" if saved_text else ""
-        self.restore_note.value = _note(f"continued from your last state in this browser{when} "
-                                        "(a CIF's atoms are not remembered)", "#282")
+        self.restore_note.value = _note(f"continued from {html.escape(what)}{when}; a CIF's atoms are not "
+                                        "remembered; earlier states: <i>config</i> tab, <i>in this browser</i>",
+                                        "#282")
         self.restore_box.layout.display = "flex"
 
     def _start_fresh(self, _b=None):
         self._forget = True
-        self.restore_note.value = _note("forgetting the remembered state, the page reloads ...", "#a60")
+        self.restore_note.value = _note("starting fresh (the current state is kept as a snapshot), "
+                                        "the page reloads ...", "#a60")
+        self.restore_box.layout.display = "flex"
         self.push_view()
 
+    # ---------------------------------------------------------- snapshots
+    # Requests go to the 3D page as numbered ops in every push until its next
+    # report acknowledges them ("ack"); the report carries the whole list.
+
+    def _set_memory_enabled(self, on: bool):
+        for wdg in (self.remember, self.snap_name, self.snap_btn, self.snap_list, self.snap_restore,
+                    self.snap_delete, self.fresh_btn2, self.forget_btn):
+            wdg.disabled = not on
+
+    def _memory_op(self, **op):
+        self._memory_seq += 1
+        self._memory_ops.append(dict(op, seq=self._memory_seq))
+        self.push_view()
+
+    def _apply_memory_report(self, report: dict):
+        ack = report.get("ack", 0)
+        self._memory_ops = [op for op in self._memory_ops if op["seq"] > ack]
+        snaps = report.get("snapshots")
+        if isinstance(snaps, list):
+            self.snapshots = [s for s in snaps if isinstance(s, dict) and s.get("id")]
+        self._memory_loading = True
+        try:
+            if isinstance(report.get("remember"), bool):
+                self.remember.value = report["remember"]
+            keep = self.snap_list.value
+            options = [(self._snapshot_label(s), s["id"]) for s in reversed(self.snapshots)]
+            self.snap_list.options = options or [("(no snapshots yet)", "")]
+            ids = [v for _, v in options]
+            self.snap_list.value = keep if keep in ids else (ids[0] if ids else "")
+        finally:
+            self._memory_loading = False
+        if self.snap_btn.disabled:            # the first report: the controls work now
+            self._set_memory_enabled(True)
+            self.memory_msg.value = ""
+        self._show_snapshot_link()
+
+    @staticmethod
+    def _snapshot_label(snap: dict) -> str:
+        name = str(snap.get("name") or "snapshot")
+        if snap.get("auto"):
+            return "auto: " + name                     # these names carry their date already
+        when = snap.get("savedText")                   # the browser's local time
+        if not when and isinstance(snap.get("saved"), (int, float)):
+            when = datetime.fromtimestamp(snap["saved"] / 1000).strftime("%Y-%m-%d %H:%M")
+        prefix = "config: " if snap.get("kind") == "config" else "★ "
+        return prefix + name + (f" · {when}" if when else "")
+
+    def _snapshot(self, sid=None) -> dict | None:
+        sid = self.snap_list.value if sid is None else sid
+        return next((s for s in self.snapshots if s.get("id") == sid), None)
+
+    def _show_snapshot_link(self, _change=None):
+        snap = self._snapshot()
+        if snap is None or not isinstance(snap.get("state"), dict):
+            self.snap_download.value = ""
+            return
+        cfg = dict(snap["state"])
+        if snap.get("display"):
+            cfg["display"] = snap["display"]
+        blob = base64.b64encode(json.dumps(cfg, indent=2).encode()).decode()
+        stem = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in str(snap.get("name", ""))).strip("._")
+        name = f"bernina_diffraction_{stem or 'snapshot'}.json"
+        self.snap_download.value = (f'<a download="{html.escape(name)}" href="data:application/json;base64,{blob}" '
+                                    f'style="font-size:12px">&#11015; download this snapshot as a config file</a>')
+
+    def _on_remember(self, change):
+        if self._memory_loading or not self._restore_done:
+            return
+        self.memory_msg.value = (_note("the state is remembered again", "#282") if change["new"] else
+                                 _note("nothing is remembered any more and the stored state is deleted; "
+                                       "snapshots stay until you delete them"))
+        self.push_view()
+
+    def _take_snapshot(self, _b=None):
+        name = self.snap_name.value.strip()        # none: the page names it by its own clock
+        self._memory_op(op="add", name=name, state=self.autosave_state())
+        self.snap_name.value = ""
+        self.memory_msg.value = _note(f"snapshot {('<b>' + html.escape(name) + '</b> ') if name else ''}"
+                                      "stored in this browser", "#282")
+
+    def _restore_snapshot(self, _b=None):
+        snap = self._snapshot()
+        if snap is None or not isinstance(snap.get("state"), dict):
+            return
+        self._memory_seq += 1                 # the state being left, as an automatic snapshot
+        self._memory_ops.append({"op": "add", "auto": True, "seq": self._memory_seq,
+                                 "name": f"before restoring {snap.get('name', 'a snapshot')}",
+                                 "state": self.autosave_state()})
+        try:
+            self.restore_state(snap["state"], snap.get("display"), what=f"the snapshot {snap.get('name', '')}")
+            self.memory_msg.value = _note(f"restored <b>{html.escape(str(snap.get('name', '')))}</b>; the state "
+                                          "before is an automatic snapshot", "#282")
+        except Exception as exc:
+            self.memory_msg.value = _err(f"could not restore this snapshot: {exc}")
+        self.push_view()
+
+    def _delete_snapshot(self, _b=None):
+        snap = self._snapshot()
+        if snap is not None:
+            self._memory_op(op="delete", id=snap["id"])
+            self.memory_msg.value = _note(f"deleted {html.escape(str(snap.get('name', '')))}", "#a60")
+
+    def _forget_everything(self, _b=None):
+        if self.forget_btn.description != "really forget?":
+            self.forget_btn.description = "really forget?"
+            self.forget_btn.button_style = "danger"
+            self.memory_msg.value = _note("click again to delete the remembered state and all snapshots")
+            return
+        self.forget_btn.description, self.forget_btn.button_style = "forget everything", ""
+        self._memory_op(op="clear")
+        self.memory_msg.value = _note("everything this app kept in this browser is deleted", "#a60")
+
     def _on_make(self, _b=None):
+        """Write the config file and download it at once: the link carries the
+        app's part, the 3D page adds its display block (unless left out) and
+        clicks it (``download`` in push_view). The same state goes into this
+        browser's history as a "config" snapshot with its date."""
         cfg = self.current_config()
         with_display = self.include["display"].value
         blob = base64.b64encode(json.dumps(cfg, indent=2).encode()).decode()
-        # the 3D page rewrites this link's href to add its own display block
-        hook = f'id="diff3d-config-download" data-cfg="{blob}" ' if with_display else ""
         stem = self.file_name.value.strip()
         stem = stem[:-5] if stem.lower().endswith(".json") else stem
         stem = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in stem).strip("._")
         name = (stem or "bernina_diffraction_config") + ".json"
-        self.download_link.value = (f'<a download="{name}" {hook}href="data:application/json;base64,{blob}" '
-                                    f'style="font-size:12px">&#11015; download {name}</a>')
+        self._downloads += 1
+        self.download_link.value = (
+            f'<a download="{name}" id="{VIEW_ID}-config-download" data-cfg="{blob}" '
+            f'data-display="{1 if with_display else 0}" data-n="{self._downloads}" '
+            f'href="data:application/json;base64,{blob}" style="font-size:12px">'
+            f'&#11015; {name}</a> <span style="font-size:11px;color:#666">downloading; if nothing '
+            'arrived, click the name</span>')
+        self._memory_seq += 1
+        self._memory_ops.append({"op": "add", "kind": "config", "seq": self._memory_seq,
+                                 "name": name, "state": self.autosave_state()})
+        self.push_view()
 
     def apply_config(self, cfg: dict) -> list:
         """Apply a stored config (this version's or the diffcalc version's)."""
@@ -968,6 +1445,14 @@ class ReflectionsApp:
         if isinstance(cfg.get("display"), dict):
             self.display_settings = cfg["display"]
             applied.append("display")
+        tools = cfg.get("tools")
+        if isinstance(tools, dict):
+            if tools.get("detector") in dif.DETECTOR_PRESETS:
+                self.d_preset.value = tools["detector"]
+            for key, wid in (("width", self.d_w), ("height", self.d_h), ("distance", self.d_dist)):
+                if isinstance(tools.get(key), (int, float)):
+                    wid.value = tools[key]
+            applied.append("tools")
         self._config_notes = notes
         return applied
 
@@ -1001,21 +1486,82 @@ class ReflectionsApp:
         return True
 
     def run_table(self, _b=None):
+        with _working(self.t_out, self.t_btn, self.t_progress, "solving the reflections ...") as step:
+            self._run_table(step)
+
+    def _run_table(self, step):
         self.t_out.clear_output()
         if not self._need_sample(self.t_out):
             return
         try:
-            hkls = [dif.parse_vector(ln) for ln in self.t_hkls.value.splitlines() if ln.strip()]
+            sg = self.space_group()
+            mode = self.t_group.value
+            if self.t_source.value == "all":
+                # grouped: every member of a family, else one per family
+                lst = cry.reflection_list(self.cell(), self.energy(), sg, self.structure, d_min=self.t_dmin.value,
+                                          max_rows=self.t_max.value, unique=not mode, allowed_only=True)
+                hkls = [tuple(r) for r in lst[["h", "k", "l"]].itertuples(index=False)] if len(lst) else []
+            else:
+                hkls = [dif.parse_vector(ln) for ln in self.t_hkls.value.splitlines() if ln.strip()]
+            if mode == "sym" and sg is None and self.structure is None:
+                raise ValueError("symmetry-equivalent needs a space group (sample tab)")
+            groups = self._table_groups(hkls, mode, sg)
         except Exception as exc:
+            self.results["table"] = exc
             with self.t_out:
-                print(exc)
+                print(f"error: {exc}")
             return
         df = dif.reflection_table(self.sample, self.constraints(), hkls, self.energy(), self.ranges(),
-                                  self.t_sol.value, self.ctrl["detector"].value)
-        self.results["table"] = df
-        _show_df(self.t_out, df)
+                                  self.t_sol.value, self.ctrl["detector"].value, progress=step)
+        extra = cry.crystal_columns(hkls, sg, self.structure, self.energy())
+        parts = ([groups] if groups is not None else []) + [df.reset_index(drop=True), extra]
+        table = pd.concat(parts, axis=1)
+        table.index = df.index
+        if groups is not None:
+            table = table.reset_index().sort_values("group", kind="stable")
+            if self.t_one.value:
+                angle = next((c for c in table.columns if str(c).startswith("Δ")), None)
+                table = cry.collapse_groups(table, angle=angle)
+            table = table.set_index(["h", "k", "l"])
+        self.results["table"] = table
+        _show_df(self.t_out, table)
+
+    def _table_groups(self, hkls, mode, sg):
+        """The grouping columns of the angles table, or None."""
+        if not mode or not hkls:
+            return None
+        if mode == "sym":
+            g = cry.equivalence_groups(hkls, sg or self.structure.space_group)
+            return g[["group", "family"]]
+        ub = self.sample.UB
+        if mode == "phi":
+            axis = np.asarray(dif.GEOMETRY.circle("phi").axis, float)
+            label = "Δphi [deg]"
+        elif mode == "surface":
+            if self.sample.n_surface is None:
+                raise ValueError("grouping about the surface normal needs one (sample tab)")
+            axis, label = np.asarray(self.sample.n_surface, float), "Δ about n [deg]"
+        else:
+            axis, label = self._direction(self.t_dir.value), f"Δ about {self.t_dir.value.strip()} [deg]"
+        g = cry.rotation_groups(hkls, ub, axis)
+        return g[["group", "rotation", "Q_par", "Q_perp"]].rename(
+            columns={"rotation": label, "Q_par": "Q∥ [1/Å]", "Q_perp": "Q⊥ [1/Å]"})
+
+    def _direction(self, text):
+        """'[u v w]' (real space) or '(h k l)' (plane normal) -> vector in the UB frame."""
+        t = text.strip()
+        if not t or t[0] not in "[(" or t[-1] not in "])":
+            raise ValueError(f"write the direction as [u v w] (real space) or (h k l) (plane normal), not {text!r}")
+        v = dif.parse_vector(t[1:-1])
+        if t[0] == "[":
+            return cry.real_direction_in_reciprocal_frame(self.sample.UB, v)
+        return self.sample.UB @ np.asarray(v, float)
 
     def run_reachable(self, _b=None):
+        with _working(self.r_out, self.r_btn, self.r_progress, "solving the reflections ...") as step:
+            self._run_reachable(step)
+
+    def _run_reachable(self, step):
         self.r_out.clear_output()
         if not self._need_sample(self.r_out):
             return
@@ -1036,7 +1582,7 @@ class ReflectionsApp:
                 from bernina_prep.thc_angles import aperture_check
                 aperture = aperture_check(self.r_aperture.value, self.r_beta.value)
             df = dif.reachable_reflections(self.sample, self.energy(), self.constraints(), hkls, self.ranges(),
-                                           aperture, self.ctrl["detector"].value)
+                                           aperture, self.ctrl["detector"].value, progress=step)
         except Exception as exc:
             self.results["reachable"] = exc
             with self.r_out:
@@ -1073,6 +1619,10 @@ class ReflectionsApp:
         self.d_w.value, self.d_h.value = width, height
 
     def run_detector(self, _b=None):
+        with _working(self.d_out, self.d_btn):
+            self._run_detector()
+
+    def _run_detector(self):
         """Map the detector face at the pose of the 3D view, then draw it."""
         self.d_out.clear_output()
         if not self._need_sample(self.d_out):
@@ -1142,6 +1692,10 @@ class ReflectionsApp:
             return None
 
     def run_crystal(self, _b=None):
+        with _working(self.c_out, self.c_btn):
+            self._run_crystal()
+
+    def _run_crystal(self):
         self.c_out.clear_output()
         try:
             sg = self.space_group()
@@ -1162,6 +1716,10 @@ class ReflectionsApp:
         _show_df(self.c_out, df, "{:.4g}")
 
     def run_grazing(self, _b=None):
+        with _working(self.g_out, self.g_btn):
+            self._run_grazing()
+
+    def _run_grazing(self):
         self.g_out.clear_output()
         import matplotlib.pyplot as plt
 
@@ -1189,8 +1747,7 @@ class ReflectionsApp:
         ax.set_ylabel("1/e depth [nm]")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
-        with self.g_out:
-            display(fig)
+        self.g_out.figure(fig)
         plt.close(fig)
         _show_df(self.g_out, gra.depth_table(d, b, e), "{:.4g}")
         if isinstance(self.selected, int) and self.df is not None and self.sample is not None \
@@ -1206,3 +1763,93 @@ class ReflectionsApp:
                     print(f"{col}: betain {bi:.3f}°, betaout {bo:.3f}° -> probed depth {z / 10:.3g} nm; "
                           f"footprint {gra.footprint(self.g_beam.value, bi) / 1e3:.3g} mm "
                           f"for a {self.g_beam.value:g} µm beam")
+
+    # ================================================================ scan (angles tab)
+
+    SCAN_RANGES = {"alpha": (-10.0, 90.0), "beta": (-10.0, 90.0), "betain": (-5.0, 45.0),
+                   "betaout": (-5.0, 90.0)}
+
+    def _refresh_scan_names(self):
+        """The scan dropdown lists the held numeric constraints."""
+        held = [n for n in dif.CIRCLES + dif.VIRTUAL_CONSTRAINTS if self.ctrl[f"{n}_fixed"].value]
+        options = [(n, n) for n in held] or [("(hold a value first)", "")]
+        if list(self.s_name.options) != options:
+            keep = self.s_name.value
+            self.s_name.options = options
+            self.s_name.value = keep if keep in held else options[0][1]
+
+    def _scan_defaults(self, change):
+        lo, hi = self.SCAN_RANGES.get(change["new"], (-180.0, 180.0))
+        self.s_from.value, self.s_to.value = lo, hi
+
+    def run_scan(self, _b=None):
+        """Solve with the chosen held value stepped through the range; plot the
+        number of solutions passing the min/max (hklforge Diffractometer.scan)."""
+        name = self.s_name.value
+        self.s_msg.value = ""
+        if not name:
+            self.s_msg.value = _note("hold an angle (fix) to scan it")
+            return
+        if self.sample is None:
+            self.s_msg.value = _err("no valid sample yet (sample tab)")
+            return
+        s = self.sample
+        try:
+            mode = dif.make_mode(self.constraints())
+            if any(k in mode for k in dif.SURFACE_CONSTRAINTS) and s.surface is None:
+                raise ValueError("betain, betaout and bin_eq_bout need a surface normal (sample tab)")
+            detector = self.ctrl["detector"].value if "h2" in mode else "h1"
+            d = Diffractometer(dif.GEOMETRY, s.UB, energy=self.energy(), surface=s.n_surface,
+                               reference=s.n_reference)
+            ranges = self.ranges()
+
+            def keep(pos):
+                if not ranges:
+                    return True
+                return dif.passes({**pos, **virtual_angles(dif.GEOMETRY, pos, s.n_surface, s.n_reference)},
+                                  ranges)
+
+            values = np.linspace(float(self.s_from.value), float(self.s_to.value), int(self.s_steps.value))
+            self.s_btn.disabled = True
+            try:
+                res = d.scan(tuple(self.hkl()), mode, name, values, detector, keep=keep)
+            finally:
+                self.s_btn.disabled = False
+        except Exception as exc:
+            self.s_msg.value = _err(exc)
+            self.results["scan"] = exc
+            return
+        counts = np.array([len(r["solutions"]) for r in res])
+        errors = sum(r["error"] is not None for r in res)
+        self._scan = (name, values, counts)
+        self.results["scan"] = pd.DataFrame({name: values, "solutions": counts})
+        self.draw_scan()
+        self.s_msg.value = _note(f"{int((counts > 0).sum())} of {len(values)} values have solutions"
+                                 + (f"; {errors} with a continuum or no valid mode" if errors else "")
+                                 + "; click in the plot to set " + html.escape(name), "#555")
+
+    def draw_scan(self):
+        if self._scan is None:
+            return
+        name, values, counts = self._scan
+        fig = self.s_fig
+        fig.clear()
+        ax = fig.add_subplot(111)
+        ax.step(values, counts, where="mid", color="#2166ac")
+        ax.fill_between(values, counts, step="mid", alpha=0.15, color="#2166ac")
+        ax.axvline(float(self.ctrl[name].value), color="#d62728", lw=1)
+        ax.set_xlabel(f"{name} [deg]")
+        ax.set_ylabel("solutions")
+        ax.set_ylim(0, max(1, int(counts.max())) + 0.5)
+        ax.set_yticks(range(0, max(1, int(counts.max())) + 1))
+        ax.grid(alpha=0.3)
+        self.s_figure.redraw()
+
+    def _scan_click(self, event):
+        if self._scan is None or event.inaxes is None or event.xdata is None:
+            return
+        name = self._scan[0]
+        if not self.ctrl[f"{name}_fixed"].value:
+            return
+        self.ctrl[name].value = round(float(event.xdata), 2)     # recompute follows
+        self.draw_scan()

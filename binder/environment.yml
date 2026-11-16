@@ -38,13 +38,13 @@ dependencies:
   - voila
   - pip
   - pip:
-    # diffractometer angle solving (bernina_prep.diffraction), the same
-    # library eco's recspace uses on the beamline
-    - hklforge>=0.0.1
-    # optional extras of the reflections app, each a plain wheel that leaves
-    # the Jupyter stack alone: space groups, CIF and structure factors (gemmi),
-    # X-ray optical constants for grazing incidence (xraydb)
-    - gemmi
+    # diffractometer angle solving, crystallography (hklforge.crystal: space
+    # groups, CIF, structure factors) and the 3D page (hklforge.view), the
+    # library eco uses on the beamline; escape.bernina (Bernina geometry,
+    # detectors) is installed by postBuild, without escape's data stack
+    - hklforge>=0.2.0
+    # X-ray form factors and optical constants (structure factors, grazing
+    # incidence)
     - xraydb
 
 # The repo's own package (so apps/ can `import bernina_prep`) is installed by

@@ -9,17 +9,22 @@ description = "Shared calculation code for the Bernina beamline prep apps and ex
 requires-python = ">=3.10"
 # Binder installs these from binder/environment.yml (postBuild uses --no-deps);
 # listed so a plain `pip install -e .` works too
-dependencies = ["numpy", "scipy", "pandas", "matplotlib", "ipywidgets>=8.1,<9", "ipympl>=0.9.4", "hklforge>=0.0.1"]
+# hklforge: the angle solver and hklforge.crystal (space groups, CIF, structure
+# factors); escape-fel: escape.bernina (Bernina geometry, detectors, 3D page),
+# of which only that subpackage is used - Binder and the browser build install
+# it without its data-stack dependencies
+dependencies = ["numpy", "scipy", "pandas", "matplotlib", "ipywidgets>=8.1,<9", "ipympl>=0.9.4",
+                "hklforge>=0.2.0", "escape-fel>=0.2.19"]
 
 [project.optional-dependencies]
-crystal = ["gemmi", "xraydb"]
-test = ["pytest", "diffcalc-core", "gemmi", "xraydb"]
+crystal = ["xraydb"]          # form factors, optical constants
+test = ["pytest", "xraydb"]
 
 [tool.setuptools]
 packages = ["bernina_prep"]
 
 [tool.setuptools.package-data]
-bernina_prep = ["diffractometer_3d.html", "presets.json"]
+bernina_prep = ["presets.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

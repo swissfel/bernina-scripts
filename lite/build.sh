@@ -5,6 +5,9 @@
 #   lite/build.sh            -> lite/_output/site/          (the static site)
 #                               lite/_output/bernina-apps.zip
 #   LITE_OUT=/elsewhere lite/build.sh   builds there instead (~2 GB while building)
+#   HKLFORGE=../../hklforge ESCAPE=../../escape-fel lite/build.sh
+#       with hklforge / escape-fel from a checkout (a path, relative to lite/,
+#       or any pip requirement such as git+https://...); default: from PyPI
 #
 # Needs python >= 3.10 (python or python3, or $PYTHON) and, for the launchers, go (skipped if missing).
 # The site can be put on any static web host (GitHub Pages: see
@@ -20,8 +23,12 @@ mkdir -p "$out/wheels" "$out/content"
 "$out/venv/bin/pip" install -q voici ipywidgets ipympl
 "$out/venv/bin/pip" wheel -q --no-deps -w "$out/wheels" ..
 rm -rf ../build                       # setuptools' scratch folder
+"$out/venv/bin/pip" wheel -q --no-deps -w "$out/wheels" "${HKLFORGE:-hklforge>=0.2.0}" "${ESCAPE:-escape-fel>=0.2.19}"
 wheel=$(ls "$out"/wheels/bernina_prep-*.whl)
-sed "s#@WHEEL@#$(realpath "$wheel")#" environment.yml.in > environment.yml
+hklforge=$(ls "$out"/wheels/hklforge-*.whl)
+escape=$(ls "$out"/wheels/escape_fel-*.whl)
+sed -e "s#@WHEEL@#$(realpath "$wheel")#" -e "s#@HKLFORGE@#$(realpath "$hklforge")#" \
+    -e "s#@ESCAPE@#$(realpath "$escape")#" environment.yml.in > environment.yml
 
 cp ../apps/*.ipynb "$out/content/"    # not apps/dev
 "$out/venv/bin/voici" build --contents "$out/content" --output-dir "$out/site"

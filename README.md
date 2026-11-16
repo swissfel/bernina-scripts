@@ -23,10 +23,14 @@ links run the notebook for you and show only the widgets.
 
 The browser links need no Binder at all: Python runs inside the browser tab
 (the first start loads ~60 MB, later starts come from the browser cache), and
-a session never times out. Only lattice-centring absences there, no CIF
-files and no structure factors (gemmi has no browser build). The reflections
+a session never times out; it has every feature of the Binder version. The reflections
 app remembers its last state in the browser in both versions, so a Binder
-session that timed out continues where it was ("start fresh" forgets it).
+session that timed out continues where it was ("start fresh" goes back to the
+defaults). It also keeps snapshots there: named ones you take, and automatic
+ones (the last session, every 10 minutes of work, before "start fresh" or a
+restore) - a backup if nobody stored a config file. All of it is in the
+config tab under "in this browser", where remembering can be switched off;
+nothing leaves the browser.
 
 ## Layout
 
@@ -74,19 +78,23 @@ session that timed out continues where it was ("start fresh" forgets it).
     [`calx.pumpprobe`](https://github.com/htlemke/calx) (pure numpy/scipy,
     reimplemented directly in `bernina_prep.timing` rather than depending
     on the full `calx` package).
-- **`bernina_prep/`** — everything behind the apps: calculations
-  (`diffraction.py` angles and detector, `detector_view.py` the detector
-  view, `otti.py` the Otti arm's detector (eco's `calc_otti` geometry,
-  spin models, sky map), `crystal.py` crystal systems,
-  space groups, CIF and structure factors, `grazing.py` penetration depth,
-  `thc_angles.py`, `beamsize.py`, `timing.py`), the reflections app itself
-  (`reflections_app.py`), the 3D page (`diffractometer_3d.html`) and the
-  Bernina setups (`presets.json`). Installed in editable mode by
-  `binder/postBuild`, so it's importable from any notebook in the repo.
-  gemmi and xraydb are optional: without them the app knows only
-  lattice-centring absences and needs the optical constants typed in.
-- **`tests/`** — `pytest tests`; `test_diffraction.py` compares the angles
-  with diffcalc.
+- **`bernina_prep/`** — the apps (`reflections_app.py`, the app classes in
+  `thc_angles.py`/`beamsize.py`, the Otti panel in `otti.py`) and the
+  calculations only they use (`grazing.py`, `timing.py`, `beamsize.py`,
+  `thc_angles.py`), `crystal.py` and the Bernina setups (`presets.json`).
+  Installed in editable mode by `binder/postBuild`, so it's importable from
+  any notebook in the repo.
+- **The calculations** are shared with eco on the beamline:
+  [hklforge](https://github.com/swissfel/hklforge) solves the angles and has
+  the crystallography (`hklforge.crystal`: all 230 space groups with every
+  absence and the equivalent reflections, a CIF reader, X-ray structure
+  factors with f′, f″ and Debye-Waller, groups of reflections);
+  [escape](https://github.com/htlemke/escape-fel)'s `escape.bernina` has
+  the Bernina-specific part (the diffractometer geometry, JUNGFRAU
+  detectors, the detector view, the Otti arm, the 3D page). Without xraydb
+  the app needs the optical constants typed in and has no structure factors.
+- **`tests/`** — `pytest tests` (the apps; the calculations are tested in
+  hklforge and escape, against gemmi and diffcalc).
 - **`prep_notebooks/`** — richer, narrative walkthroughs meant for local use
   (they may depend on packages, data, or facility access not available on
   Binder).
@@ -131,7 +139,7 @@ voila, and the widget stack is deliberately constrained.
 browser (Voici: voila on JupyterLite, Python as WebAssembly), plus
 `bernina-apps.zip` with a small launcher per operating system
 (`lite/server`, Go). No installation; ~100 MB zip, ~60 MB loaded by the
-browser on first start. gemmi has no WebAssembly build, so the browser
-version knows only lattice-centring absences. `.github/workflows/lite.yml`
+browser on first start. Everything it needs is pure Python or built for
+WebAssembly (`lite/environment.yml.in`). `.github/workflows/lite.yml`
 publishes it to GitHub Pages on every push (Pages source: "GitHub Actions")
 and attaches the zip to the run.

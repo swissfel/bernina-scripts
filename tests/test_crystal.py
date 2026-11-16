@@ -25,30 +25,29 @@ def test_check_cell():
     assert cry.check_cell(dict(tetragonal_looking, gamma=120), "R-3m") == []
 
 
-@pytest.mark.parametrize("use_gemmi", [True, False])
-def test_absences(monkeypatch, use_gemmi):
-    if use_gemmi:
-        pytest.importorskip("gemmi")
-    else:
-        monkeypatch.setattr(cry, "gemmi", None)
+def test_absences():
     r = cry.SpaceGroup("R-3m")
     assert not r.is_allowed((0, 0, 1)) and r.is_allowed((0, 0, 3)) and not r.is_allowed((1, 0, 0))
     assert "R centring" in r.why_forbidden((0, 0, 1))
     f = cry.SpaceGroup("Fd-3m")
     assert not f.is_allowed((1, 0, 0)) and f.is_allowed((1, 1, 1))
-    # (2 0 0) of diamond: forbidden by the d glide, which only gemmi knows
-    assert f.is_allowed((2, 0, 0)) is (not use_gemmi)
-    assert f.full is use_gemmi
+    # (2 0 0) of diamond: removed by the d glide (and the 4_1 screw)
+    assert not f.is_allowed((2, 0, 0)) and "d-glide" in f.why_forbidden((2, 0, 0))
+    assert "2₁ screw axis along [0 1 0]" in cry.SpaceGroup("P21/c").why_forbidden((0, 1, 0))
+    assert "c-glide plane ⊥ (0 1 0)" in cry.SpaceGroup("P21/c").why_forbidden((1, 0, 1))
+    assert f.full
 
 
 def test_cif_structure_factors():
-    pytest.importorskip("gemmi")
     st = cry.read_cif(DATA / "Bi2Se3.cif")
     assert st.formula == "Bi2Se3" and abs(st.density - 7.66) < 0.05 and st.z_electrons == 804
     assert st.structure_factor((0, 0, 1)) < 1e-6 and st.structure_factor((0, 0, 3)) > 50
     assert abs(st.structure_factor((0, 0, 0)) - 804) < 2          # F(000) = electrons per cell
     df = cry.reflection_list(st.cell, 9000, structure=st, d_min=2.0)
-    assert {(0, 0, 3), (0, 0, 6), (1, 0, -5)} <= set(zip(df.h, df.k, df.l))   # (1 0 -5) ~ (0 1 5)
+    found = set(zip(df.h, df.k, df.l))
+    assert {(0, 0, 3), (0, 0, 6)} <= found
+    assert len(found & set(st.space_group.equivalents((1, 0, -5)))) == 1   # one of each set
+    assert {"|F|", "|F|²", "mult", "why not"} <= set(df.columns)
     assert not df[(df.h == 0) & (df.k == 0) & (df.l == 1)]["allowed"].any() if len(df) else True
     assert cry.target_check((0, 0, 1), st.cell, structure=st)
 

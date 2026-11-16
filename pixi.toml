@@ -25,16 +25,14 @@ voila = "*"            # do NOT pin <0.5.8 - see binder/environment.yml
 jupyterlab = "*"       # local editing; harmless alongside voila
 
 [pypi-dependencies]
-hklforge = ">=0.0.1"
-gemmi = "*"
+hklforge = ">=0.2.0"      # with hklforge.crystal and hklforge.view (3D page)
+escape-fel = ">=0.2.19"   # with escape.bernina (Binder/browser install it without its deps)
 xraydb = "*"
+gemmi = "*"               # apps/dev/sg_explorer.py only
 bernina_prep = { path = ".", editable = true }
 
 [feature.test.dependencies]
 pytest = "*"
-
-[feature.test.pypi-dependencies]
-diffcalc_core = "*"   # the reference tests/test_diffraction.py compares against
 
 [environments]
 test = ["test"]
