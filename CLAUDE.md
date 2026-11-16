@@ -84,9 +84,10 @@ self-contained three.js page built from any `Geometry`; the app embeds it with
 `bernina-reflections` so browsers keep what they remembered) via
 `<iframe srcdoc>`. Messages come from `hklforge.view.message` in the lab
 (SwissFEL) frame - the page turns vectors into its own frame, so there is no
-`to_you()` any more. escape's `escape/bernina/diffractometer_3d.html` (and
-eco's identical copy) is the earlier You-only page, still used by eco until
-eco and escape move to hklforge's view (after the production test). A `srcdoc` iframe inherits the parent document's origin, so
+`to_you()` any more. escape (>= 0.2.21) offers the same as
+`diffraction.viewer_page()` / `view_message()`, which eco uses since
+2026-11-16; escape's `diffractometer_3d.html` (`VIEWER_HTML`) and eco's copy
+are the earlier You-only page, kept only for older eco/escape combinations. A `srcdoc` iframe inherits the parent document's origin, so
 the page can simply **read a hidden element the notebook writes into**
 (`#diff3d-payload`, polled every 150 ms) — no custom widget, no `postMessage`
 plumbing, and the page stays fully usable standalone because the read just
