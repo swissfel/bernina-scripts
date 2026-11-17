@@ -42,7 +42,7 @@ dependencies:
     # groups, CIF, structure factors) and the 3D page (hklforge.view), the
     # library eco uses on the beamline; escape.bernina (Bernina geometry,
     # detectors) is installed by postBuild, without escape's data stack
-    - hklforge>=0.2.0
+    - hklforge>=0.2.1
     # X-ray form factors and optical constants (structure factors, grazing
     # incidence)
     - xraydb

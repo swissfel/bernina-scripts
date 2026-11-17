@@ -135,7 +135,7 @@ A change to a calculation or to the 3D page goes to hklforge/escape; for a
 local test install them editable into the pixi envs
 (`.pixi/envs/<env>/bin/python -m pip install --no-deps -e ../hklforge -e ../escape-fel`)
 and build the browser version with `HKLFORGE=... ESCAPE=... lite/build.sh`.
-Binder and the Pages build take the released versions (hklforge >= 0.2.0,
+Binder and the Pages build take the released versions (hklforge >= 0.2.1,
 escape-fel >= 0.2.19, the first with escape.bernina).
 
 ## Diffraction conventions (escape.bernina.diffraction)
