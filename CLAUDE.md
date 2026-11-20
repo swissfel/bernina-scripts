@@ -216,6 +216,15 @@ escape-fel >= 0.3.5: `energy` passed through to hklforge).
   session). Verified end to end in voila + Chrome (CDP), 2026-11-20.
 - **xraydb is optional**: without it there are no structure factors and
   grazing incidence needs δ and β typed in.
+- **3D view extras from hklforge (optional, guarded imports)**: every push
+  also sends `structureFactors` (`hklforge.view.structure_factor_nodes`,
+  |F|² of the reachable reflections, cached per structure and energy) and
+  `structure` (`structure_atoms`, the cell's atoms, cached per structure),
+  None without a CIF; the page draws them as structure-factor spheres and
+  the experimental real-space structure. The CIF row has an "example CIF"
+  menu (`hklforge.crystal.examples`) that loads like an upload. With an
+  hklforge without these (<= 0.2.4) the menu is hidden and nothing extra
+  is sent.
 - **Browser memory**: the 3D page keeps the app's state, snapshots and the
   remember switch in localStorage (`bernina-reflections-state`,
   `-snapshots`, `-remember`); the app talks to it through hidden text
