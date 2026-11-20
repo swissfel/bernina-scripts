@@ -287,7 +287,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/31/7d/164b7ffc8624fe9efb4221bf9af485d5c1e41b9ae118045d2b6dc5457d8b/click-8.5.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/38/8b/7ec325b4e9e78beefc2d025b01ee8a2fde771ef7c957c3bff99b9e1fbffa/xraydb-4.5.8-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/3a/e2/811f10618f10f823814b0e873df6b6019a5c5c814037ce231aa8ae4e2a2f/hklforge-0.2.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/4a/cc/aa1a47f8c92280d37498a5ea56a2a36606d034383e3e6472d64cbb56cf85/msgspec-0.22.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/6c/c0/a98505f18594f1bce828bb159cec0fcf9860562f1a2c85913409fc8f3d9e/fsspec-2026.9.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/71/e7/40fb618334dcdf7c5a316c0e7343c5cd82d3d866edc100d98e29bc945ecd/partd-1.4.2-py3-none-any.whl
@@ -309,6 +308,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/d7/89/c3725d94b5f1e590af2c78c0b57c933abaecd352261d0cdd48d6de286bea/oschmod-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/db/17/4c8beb6c8c4176c6bf143bfd7e1e4dd6719b00ced90738c7ac471b71c1df/toolz-1.2.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/db/bc/83e112abc66cd466c6b83f99118035867cecd41802f8d044638aa78a106e/locket-1.0.0-py2.py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/dd/eb/769a66b67464dadb4c06bd33dbb1ce22f687fb05e84b77c067b23098dc3f/hklforge-0.2.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e8/88/5a431cd1ea7587408a66947384b39beb2ab2bcc1c87b7c4082f05036719f/gemmi-0.7.5-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/f8/3a/4fc99e788bcfa1b3b3f21abf57da45898d807d007e7f6fd1c7300904eb70/dask-2026.8.0-py3-none-any.whl
   test:
@@ -593,7 +593,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/31/7d/164b7ffc8624fe9efb4221bf9af485d5c1e41b9ae118045d2b6dc5457d8b/click-8.5.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/38/8b/7ec325b4e9e78beefc2d025b01ee8a2fde771ef7c957c3bff99b9e1fbffa/xraydb-4.5.8-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/3a/e2/811f10618f10f823814b0e873df6b6019a5c5c814037ce231aa8ae4e2a2f/hklforge-0.2.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/4a/cc/aa1a47f8c92280d37498a5ea56a2a36606d034383e3e6472d64cbb56cf85/msgspec-0.22.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/6c/c0/a98505f18594f1bce828bb159cec0fcf9860562f1a2c85913409fc8f3d9e/fsspec-2026.9.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/71/e7/40fb618334dcdf7c5a316c0e7343c5cd82d3d866edc100d98e29bc945ecd/partd-1.4.2-py3-none-any.whl
@@ -615,6 +614,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/d7/89/c3725d94b5f1e590af2c78c0b57c933abaecd352261d0cdd48d6de286bea/oschmod-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/db/17/4c8beb6c8c4176c6bf143bfd7e1e4dd6719b00ced90738c7ac471b71c1df/toolz-1.2.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/db/bc/83e112abc66cd466c6b83f99118035867cecd41802f8d044638aa78a106e/locket-1.0.0-py2.py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/dd/eb/769a66b67464dadb4c06bd33dbb1ce22f687fb05e84b77c067b23098dc3f/hklforge-0.2.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e8/88/5a431cd1ea7587408a66947384b39beb2ab2bcc1c87b7c4082f05036719f/gemmi-0.7.5-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/f8/3a/4fc99e788bcfa1b3b3f21abf57da45898d807d007e7f6fd1c7300904eb70/dask-2026.8.0-py3-none-any.whl
 packages:
@@ -6796,7 +6796,7 @@ packages:
   - matplotlib
   - ipywidgets>=8.1,<9
   - ipympl>=0.9.4
-  - hklforge>=0.2.3
+  - hklforge>=0.2.4
   - escape-fel>=0.3.5
   - xraydb ; extra == 'crystal'
   - pytest ; extra == 'test'
@@ -6902,31 +6902,6 @@ packages:
   - coverage ; extra == 'test'
   - xraydb[dev,doc,test] ; extra == 'all'
   requires_python: '>=3.9'
-- pypi: https://files.pythonhosted.org/packages/3a/e2/811f10618f10f823814b0e873df6b6019a5c5c814037ce231aa8ae4e2a2f/hklforge-0.2.3-py3-none-any.whl
-  name: hklforge
-  version: 0.2.3
-  sha256: e49e9a8be37cc8c6f1e752cda0788b1e629953c1d47e668db82cdf11164ae8dd
-  requires_dist:
-  - numpy>=1.24
-  - pyyaml>=6.0
-  - matplotlib ; extra == 'draw'
-  - ipywidgets>=8 ; extra == 'app'
-  - pandas ; extra == 'crystal'
-  - xraydb ; extra == 'crystal'
-  - pytest ; extra == 'test'
-  - scipy ; extra == 'test'
-  - diffcalc-core ; extra == 'test'
-  - xrayutilities ; extra == 'test'
-  - matplotlib ; extra == 'test'
-  - pandas ; extra == 'test'
-  - xraydb ; extra == 'test'
-  - gemmi ; extra == 'test'
-  - matplotlib ; extra == 'examples'
-  - pandas ; extra == 'examples'
-  - jupyter ; extra == 'examples'
-  - diffcalc-core ; extra == 'examples'
-  - xrayutilities ; extra == 'examples'
-  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/4a/cc/aa1a47f8c92280d37498a5ea56a2a36606d034383e3e6472d64cbb56cf85/msgspec-0.22.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
   name: msgspec
   version: 0.22.0
@@ -7270,6 +7245,31 @@ packages:
   version: 1.0.0
   sha256: b6c819a722f7b6bd955b80781788e4a66a55628b858d347536b7e81325a3a5e3
   requires_python: '>=2.7,!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*'
+- pypi: https://files.pythonhosted.org/packages/dd/eb/769a66b67464dadb4c06bd33dbb1ce22f687fb05e84b77c067b23098dc3f/hklforge-0.2.4-py3-none-any.whl
+  name: hklforge
+  version: 0.2.4
+  sha256: 7c584d9ac79438420d8b886789dccfb980d26179762da7c24e8aaa591157afa0
+  requires_dist:
+  - numpy>=1.24
+  - pyyaml>=6.0
+  - matplotlib ; extra == 'draw'
+  - ipywidgets>=8 ; extra == 'app'
+  - pandas ; extra == 'crystal'
+  - xraydb ; extra == 'crystal'
+  - pytest ; extra == 'test'
+  - scipy ; extra == 'test'
+  - diffcalc-core ; extra == 'test'
+  - xrayutilities ; extra == 'test'
+  - matplotlib ; extra == 'test'
+  - pandas ; extra == 'test'
+  - xraydb ; extra == 'test'
+  - gemmi ; extra == 'test'
+  - matplotlib ; extra == 'examples'
+  - pandas ; extra == 'examples'
+  - jupyter ; extra == 'examples'
+  - diffcalc-core ; extra == 'examples'
+  - xrayutilities ; extra == 'examples'
+  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/e8/88/5a431cd1ea7587408a66947384b39beb2ab2bcc1c87b7c4082f05036719f/gemmi-0.7.5-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
   name: gemmi
   version: 0.7.5
