@@ -216,6 +216,14 @@ def with_state(address: str, param: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query + [(LINK_PARAM, param)]), ""))
 
 
+def without_state(address: str) -> str:
+    """``address`` without its ?state= / #state= (other query parameters kept)."""
+    parts = urlsplit(address)
+    query = [(k, v) for k, vs in parse_qs(parts.query).items() for v in vs if k != LINK_PARAM]
+    frag = "" if LINK_PARAM in parse_qs(parts.fragment) else parts.fragment
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), frag))
+
+
 def state_links(param: str, address: str | None = None) -> dict:
     """{name: url} opening the app with this state: in the browser version
     (first: no server, opens fastest), on Binder and, when known, at the
@@ -228,6 +236,35 @@ def state_links(param: str, address: str | None = None) -> dict:
         links["this address"] = with_state(address, param)
     links["Binder"] = f"{BINDER_URL}?urlpath=" + quote(f"voila/render/{APP_NOTEBOOK}?{LINK_PARAM}={param}", safe="")
     return links
+
+
+# the tools' settings kept in the remembered state, snapshots and links
+# (autosave_state "tools"; the detector preset and size have their own keys)
+TOOL_SETTINGS = ("t_hkls", "t_sol", "t_source", "t_dmin", "t_max", "t_group", "t_dir", "t_one",
+                 "r_source", "r_dmin", "r_max", "r_aperture", "r_beta", "r_only",
+                 "d_tol", "d_qty", "d_res", "d_follow", "c_dmin", "c_forbidden",
+                 "g_formula", "g_density", "g_delta", "g_beta", "g_beam", "s_from", "s_to", "s_steps")
+
+
+def _set_if_valid(widget, value):
+    """Set a widget from a stored value, leaving it alone if the value does
+    not fit (another type, an option that no longer exists, out of bounds)."""
+    current = widget.value
+    if isinstance(current, bool):
+        if isinstance(value, bool):
+            widget.value = value
+        return
+    if isinstance(current, (int, float)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return
+    elif isinstance(current, str) and not isinstance(value, str):
+        return
+    if isinstance(widget, (widgets.Dropdown, widgets.ToggleButtons)):
+        values = [o[1] if isinstance(o, tuple) else o for o in widget.options]
+        if value not in values:
+            return
+    with contextlib.suppress(Exception):            # bounds, traits
+        widget.value = value
 
 
 def _num_or_none(text):
@@ -1247,6 +1284,8 @@ class ReflectionsApp:
             msg["memory"] = {"remember": bool(self.remember.value), "ops": list(self._memory_ops)}
         if self._forget:
             msg["forgetState"] = True
+            if state_param(self.page_address) is not None:   # opened from a link: reload without it
+                msg["reloadTo"] = without_state(self.page_address)
         elif self._restore_done:
             msg["autosave"] = self.autosave_state()
         self._pushes += 1
@@ -1397,8 +1436,11 @@ class ReflectionsApp:
 
     def autosave_state(self) -> dict:
         state = self.current_config(everything=True)
-        state["tools"] = {"detector": self.d_preset.value, "width": self.d_w.value, "height": self.d_h.value,
-                          "distance": self.d_dist.value}
+        tools = {"detector": self.d_preset.value, "width": self.d_w.value, "height": self.d_h.value,
+                 "distance": self.d_dist.value, "tab": self.tool_tabs.selected_index,
+                 "overlays": {k: cb.value for k, cb in self.d_over.items()}}
+        tools.update({name: getattr(self, name).value for name in TOOL_SETTINGS + ("s_name",)})
+        state["tools"] = tools
         state["selected"] = self.selected
         return state
 
@@ -1495,6 +1537,12 @@ class ReflectionsApp:
         finally:
             self._suspend = False
         self.recompute()
+        # the scan's angle list exists only now (held constraints), and choosing an
+        # angle resets the range to its default: the angle first, then the range
+        tools = state.get("tools") if isinstance(state.get("tools"), dict) else {}
+        for name in ("s_name", "s_from", "s_to"):
+            if name in tools:
+                _set_if_valid(getattr(self, name), tools[name])
         sel = state.get("selected")
         if sel in (SEL_CONFIG, SEL_ZERO) or (isinstance(sel, int) and 0 <= sel < len(self.cols)):
             self.select(sel)
@@ -1720,6 +1768,14 @@ class ReflectionsApp:
             for key, wid in (("width", self.d_w), ("height", self.d_h), ("distance", self.d_dist)):
                 if isinstance(tools.get(key), (int, float)):
                     wid.value = tools[key]
+            for name in TOOL_SETTINGS:
+                if name in tools:
+                    _set_if_valid(getattr(self, name), tools[name])
+            for k, on in (tools.get("overlays") or {}).items():
+                if k in self.d_over and isinstance(on, bool):
+                    self.d_over[k].value = on
+            if isinstance(tools.get("tab"), int) and 0 <= tools["tab"] < len(self.tool_tabs.children):
+                self.tool_tabs.selected_index = tools["tab"]
             applied.append("tools")
         self._config_notes = notes
         return applied

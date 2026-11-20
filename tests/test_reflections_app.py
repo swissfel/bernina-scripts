@@ -532,3 +532,69 @@ def test_link_includes_the_3d_views_display(app):
     new.state_from_view.value = json.dumps({"kind": "offer", "address": app.link_text.value})
     sent = _payload(new)["display"]                                  # still on the last push of the burst
     assert {k: sent[k] for k in display} == display
+
+
+def _carry(app):
+    """A new session offered this app's remembered state, as after a reload."""
+    new = ReflectionsApp()
+    new.state_from_view.value = json.dumps({"kind": "offer", "state": json.loads(json.dumps(app.autosave_state()))})
+    return new
+
+
+def test_reload_keeps_the_tools_settings(app):
+    from bernina_prep import reflections_app as ra
+    app.state_from_view.value = "{}"
+    app.t_hkls.value, app.t_dmin.value, app.t_group.value, app.t_dir.value = "1,1,1\n0,0,2", 2.5, "dir", "[1 1 0]"
+    app.t_sol.value, app.t_one.value, app.t_source.value = 2, True, "list"
+    app.r_source.value, app.r_dmin.value, app.r_beta.value, app.r_only.value = "list", 2.0, 15.0, True
+    app.d_qty.value, app.d_tol.value, app.d_res.value = "solid_angle", 2.0, 221
+    flipped = {k: not cb.value for k, cb in app.d_over.items()}
+    for k, v in flipped.items():
+        app.d_over[k].value = v
+    app.c_dmin.value, app.c_forbidden.value = 2.0, True
+    app.g_formula.value, app.g_density.value, app.g_delta.value, app.g_beam.value = "SrTiO3", 5.12, "1e-5", 30.0
+    app.s_name.value = "chi"
+    app.s_from.value, app.s_to.value, app.s_steps.value = -40.0, 50.0, 91
+    app.tool_tabs.selected_index = 2
+    new = _carry(app)
+    for name in ra.TOOL_SETTINGS + ("s_name",):
+        assert getattr(new, name).value == getattr(app, name).value, name
+    assert {k: cb.value for k, cb in new.d_over.items()} == flipped and new.tool_tabs.selected_index == 2
+    # a stored value that no longer fits is left alone
+    state = app.autosave_state()
+    state["tools"].update(t_group="no such grouping", d_res="many", c_dmin=None)
+    other = ReflectionsApp()
+    other.state_from_view.value = json.dumps({"kind": "offer", "state": state})
+    assert other.t_group.value == "" and other.d_res.value == 161 and other.c_dmin.value == 1.0   # defaults
+
+
+def test_reload_keeps_the_selected_solution(app):
+    app.state_from_view.value = "{}"
+    app.ctrl["eta"].value, app.ctrl["chi"].value = 20.0, 45.0      # free energy: its solution and energy
+    app.ctrl["mu_fixed"].value, app.ctrl["energy_fixed"].value = True, False
+    app.select(1)
+    new = _carry(app)
+    assert new.selected == 1 and new.energy() == app.energy() and new.energy_free()
+    app.ctrl["mu_fixed"].value, app.ctrl["energy_fixed"].value = False, True   # two reflections
+    app.ctrl["eta_fixed"].value = app.ctrl["phi_fixed"].value = False
+    app.ctrl["mu_fixed"].value, app.ctrl["chi"].value = True, 30.0
+    app.ctrl["h2"].value, app.ctrl["k2"].value, app.ctrl["l2"].value = 2.0, 2.0, 0.0
+    app.ctrl["two"].value, app.ctrl["detector"].value = True, "between"
+    app.select(len(app.cols) - 1)
+    new = _carry(app)
+    assert new.selected == app.selected and new.shown_angles() == app.shown_angles()
+    assert new._ghost_detectors() == app._ghost_detectors()
+
+
+def test_start_fresh_after_a_link_drops_the_link(app):
+    from bernina_prep import reflections_app as ra
+    link = ra.with_state("http://localhost:8866/voila/render/a.ipynb?x=1", ra.encode_link_state({"energy": 8000.0}))
+    app.state_from_view.value = json.dumps({"kind": "offer", "address": link})
+    assert app.energy() == 8000.0
+    app.fresh_btn.click()
+    msg = _payload(app)
+    assert msg["forgetState"] is True and msg["reloadTo"] == "http://localhost:8866/voila/render/a.ipynb?x=1"
+    plain = ReflectionsApp()
+    plain.state_from_view.value = json.dumps({"kind": "offer", "address": "http://localhost:8866/a.ipynb"})
+    plain.fresh_btn.click()
+    assert "reloadTo" not in _payload(plain)

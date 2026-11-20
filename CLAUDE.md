@@ -196,6 +196,13 @@ escape-fel >= 0.3.5: `energy` passed through to hklforge).
   `add` with `kind: "link"`; the page stores it as a snapshot with
   `getDisplay()` and reports it back, and the link is rebuilt with
   `display` (works with the released page, no hklforge change).
+- **Reload keeps the tools**: `autosave_state()["tools"]` has every
+  setting in `TOOL_SETTINGS`, the detector overlays and the tool tab;
+  `_set_if_valid` skips stored values that no longer fit. The scan's angle
+  and range are set after the recompute (the angle list depends on the held
+  constraints, and choosing an angle resets the range). *start fresh* after a
+  link sends `reloadTo` (the address without `?state=`; hklforge >= 0.2.4
+  page, an older one reloads with the link).
 - **Display blocks ride on pushes for `DISPLAY_HOLD` (3 s)**, not on one:
   the page reads the newest payload every 150 ms, and a restore pushes
   several in a row, so a display sent once could be overwritten unseen.
