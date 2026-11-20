@@ -97,7 +97,7 @@ def test_tools_run(app):
     assert len(app.results["table"]) == 4 and app.results["reachable"]["reachable"].any()
     # results are written into the tools' HTML areas (not Output widgets), busy line gone, buttons back
     for area, btn in ((app.t_out, app.t_btn), (app.r_out, app.r_btn), (app.c_out, app.c_btn)):
-        assert "<table" in area.widget.value and "&#8987;" not in area.widget.value and not btn.disabled
+        assert "<table" in area.html.value and "&#8987;" not in area.html.value and not btn.disabled
     assert app.t_progress.layout.display == "none"
     m, spots = app.results["detector"]
     assert m["h"].shape[0] > 10
@@ -652,3 +652,40 @@ def test_example_cifs_and_atoms_to_3d_view(app):
     app._clear_cif()
     app.push_view()
     assert _payload(app)["structure"] is None
+
+
+def test_table_columns_fold_and_transpose(app):
+    """The bar above a tool's table folds the real angles, the virtual angles
+    and the crystal columns away and transposes the table; the stored result
+    keeps every column."""
+    from bernina_prep.reflections_app import REAL_ANGLES, VIRTUAL_ANGLES, TRANSPOSE_SYMBOL
+    _load_si_cif(app)
+    app.t_source.value = "list"
+    app.run_table()
+    area, full = app.t_out, app.results["table"]
+    assert area.bar.layout.display == "flex" and area.transpose.description == TRANSPOSE_SYMBOL
+    cols = {str(c) for c in full.columns}
+    real = cols & set(REAL_ANGLES)
+    virtual = cols & set(VIRTUAL_ANGLES)
+    assert real and virtual and "|F|" in cols
+
+    def headers():
+        import re
+        return set(re.findall(r"<th[^>]*>([^<]+)</th>", area.html.value))
+
+    assert real | virtual <= headers()
+    area.show_real.value = False
+    assert not (real & headers()) and virtual <= headers()
+    area.show_virtual.value = False
+    area.show_crystal.value = False
+    shown = area.view(full)
+    assert not ({str(c) for c in shown.columns} & (real | virtual | {"|F|", "|F|²", "d [A]"}))
+    assert len(shown.columns) < len(full.columns) and list(app.results["table"].columns) == list(full.columns)
+    area.transpose.value = True
+    t = area.view(full)
+    assert list(t.columns) == list(shown.index) and list(t.index) == list(shown.columns)
+    area.show_real.value = area.show_virtual.value = area.show_crystal.value = True
+    area.transpose.value = False
+    assert real | virtual <= headers()
+    area.clear_output()
+    assert area.bar.layout.display == "none"            # no table, no bar

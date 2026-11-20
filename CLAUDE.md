@@ -103,6 +103,13 @@ page clicks the link (not on the first payload a reloaded page reads). The
 same state goes to the browser history as a snapshot of kind "config". On load, `display` rides on
 exactly one push so later pushes do not reset the user's toggles.
 
+Tool results go into a `ResultArea` (an HTML widget, set directly). Above a
+table it shows a bar that folds column groups away - real angles (the
+circles, `REAL_ANGLES`), virtual angles (`VIRTUAL_ANGLES`), crystal columns
+(`CRYSTAL_COLUMNS`) - and transposes it (⇄ᵀ); the stored DataFrame keeps
+every column, only `ResultArea.view()` changes what is drawn. Done in python
+(checkboxes + toggle), as an HTML widget cannot run scripts.
+
 Clicking a pandas DataFrame's rows is browser text selection and **cannot**
 reach python. To make solutions selectable, the table is rendered as HTML with
 a row of `Button`s acting as column headers.

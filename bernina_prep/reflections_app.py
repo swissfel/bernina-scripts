@@ -334,6 +334,15 @@ def _working(area, button=None, progress=None, text="computing ..."):
             progress.layout.display = "none"
 
 
+# Column groups a table's view can fold away (ResultArea's bar): the
+# diffractometer's own circles ("real" angles), the virtual (physical) angles
+# and the crystal columns. Every other column always shows.
+REAL_ANGLES = tuple(dif.GEOMETRY.names) + ("energy",)
+VIRTUAL_ANGLES = ("theta", "ttheta", "qaz", "naz", "alpha", "beta", "psi", "tau", "betain", "betaout", "omega")
+CRYSTAL_COLUMNS = ("d [A]", "2theta", "allowed", "why not", "mult", "|F|", "|F|²", "I rel")
+TRANSPOSE_SYMBOL = "\u21c4\u1d40"          # ⇄ᵀ
+
+
 class ResultArea:
     """Where a tool writes its result: an HTML widget whose value is set
     directly - ``with area: print(...)`` collects text, ``show_df`` adds a
@@ -342,15 +351,55 @@ class ResultArea:
     Not an Output widget: in the browser version (xeus-python) output printed
     from a button callback never reaches an Output widget, so the tools
     seemed to do nothing. Setting a widget's value works in every front-end.
+
+    Above a table a small bar folds column groups away (real angles,
+    virtual angles, crystal columns) and transposes it (``TRANSPOSE_SYMBOL``);
+    it only changes how the stored tables are drawn.
     """
 
     def __init__(self, layout=None):
-        self.widget = widgets.HTML(layout=layout or L(width="100%"))
+        self.html = widgets.HTML(layout=L(width="100%"))
+        chk = lambda d, tip: widgets.Checkbox(value=True, description=d, indent=False, tooltip=tip,  # noqa: E731
+                                              layout=L(width="auto", margin="0 10px 0 0"))
+        self.show_real = chk("real angles", "the diffractometer circles (" + ", ".join(REAL_ANGLES) + ")")
+        self.show_virtual = chk("virtual angles", "theta, 2theta, qaz, naz, alpha, beta, psi, tau, betain, betaout, omega")
+        self.show_crystal = chk("crystal", "d, 2theta, allowed, why not, multiplicity, |F|, |F|², I rel")
+        self.transpose = widgets.ToggleButton(value=False, description=TRANSPOSE_SYMBOL, tooltip="transpose the table",
+                                              layout=L(width="44px", height="24px"))
+        for c in (self.show_real, self.show_virtual, self.show_crystal, self.transpose):
+            c.observe(lambda _c: self._render(), names="value")
+        self.bar = widgets.HBox([widgets.HTML('<span style="font-size:12px;color:#555;margin-right:6px">columns:</span>'),
+                                 self.show_real, self.show_virtual, self.show_crystal, self.transpose],
+                                layout=L(display="none", align_items="center"))
+        self.widget = widgets.VBox([self.bar, self.html], layout=layout or L(width="100%"))
         self._parts = []
         self._busy = ""
 
+    def view(self, df):
+        """``df`` with the folded column groups left out, transposed if asked."""
+        hide = set()
+        for box, names in ((self.show_real, REAL_ANGLES), (self.show_virtual, VIRTUAL_ANGLES),
+                           (self.show_crystal, CRYSTAL_COLUMNS)):
+            if not box.value:
+                hide.update(names)
+        keep = [c for c in df.columns if str(c) not in hide]
+        out = df[keep]
+        return out.T if self.transpose.value else out
+
+    def _table_html(self, df, floatfmt, max_rows):
+        df = self.view(df)
+        with pd.option_context("display.max_rows", max_rows):
+            table = df.to_html(float_format=floatfmt.format, max_rows=max_rows, border=0, na_rep="")
+        return ('<div style="overflow-x:auto;font-size:12px" class="bernina-table">'
+                '<style>.bernina-table table{border-collapse:collapse}.bernina-table th,'
+                '.bernina-table td{padding:1px 6px;text-align:right;white-space:nowrap}'
+                '.bernina-table tr:nth-child(even){background:#f6f8fa}</style>' + table + "</div>")
+
     def _render(self):
-        self.widget.value = self._busy + "".join(self._parts)
+        tables = [p for p in self._parts if not isinstance(p, str)]
+        self.bar.layout.display = "flex" if tables else "none"
+        self.html.value = self._busy + "".join(p if isinstance(p, str) else self._table_html(*p)
+                                               for p in self._parts)
 
     def clear_output(self):
         self._parts = []
@@ -384,12 +433,8 @@ class ResultArea:
         return False
 
     def show_df(self, df, floatfmt="{:.3f}", max_rows=200):
-        with pd.option_context("display.max_rows", max_rows):
-            table = df.to_html(float_format=floatfmt.format, max_rows=max_rows, border=0, na_rep="")
-        self.add_html('<div style="overflow-x:auto;font-size:12px" class="bernina-table">'
-                      '<style>.bernina-table table{border-collapse:collapse}.bernina-table th,'
-                      '.bernina-table td{padding:1px 6px;text-align:right;white-space:nowrap}'
-                      '.bernina-table tr:nth-child(even){background:#f6f8fa}</style>' + table + "</div>")
+        self._parts.append((df, floatfmt, max_rows))      # drawn by _render, through view()
+        self._render()
 
     def figure(self, fig, dpi=90):
         buf = io.BytesIO()
