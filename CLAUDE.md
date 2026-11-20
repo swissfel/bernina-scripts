@@ -135,7 +135,8 @@ A change to a calculation or to the 3D page goes to hklforge/escape; for a
 local test install them editable into the pixi envs
 (`.pixi/envs/<env>/bin/python -m pip install --no-deps -e ../hklforge -e ../escape-fel`)
 and build the browser version with `HKLFORGE=... ESCAPE=... lite/build.sh`.
-Binder and the Pages build take the released versions (hklforge >= 0.2.4:
+Binder and the Pages build take the released versions (hklforge >= 0.3.0:
+structure-factor spheres, real-space atoms, example CIFs; 0.2.4:
 the page's `reloadTo` for start fresh; 0.2.3:
 `Structure.to_dict`, the page's address in its offer, free energy;
 escape-fel >= 0.3.5: `energy` passed through to hklforge).
