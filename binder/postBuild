@@ -20,7 +20,7 @@ pip install --no-deps -e "${REPO_DIR}"
 # escape.bernina needs only numpy, pandas and hklforge (environment.yml), not
 # escape's data stack (dask, h5py, zarr, ...), and `import escape` loads that
 # stack only on first use - so escape-fel goes in without its dependencies
-pip install --no-deps "escape-fel>=0.2.19"
+pip install --no-deps "escape-fel>=0.3.5"
 python -c "import escape.bernina; print('escape.bernina import OK:', escape.bernina.__file__)"
 python -c "import bernina_prep; print('bernina_prep import OK:', bernina_prep.__file__)"
 

@@ -367,3 +367,108 @@ def test_geometry_tab_built_when_opened(app):
     assert e is not None and e.pick.value.startswith("bernina")
     assert e.geometry.names == ["mu", "eta", "chi", "phi", "gamma", "delta"]
     assert 'class="geo3d-frame"' in e.view.value
+
+
+def test_energy_free_offered_solved_and_followed(app):
+    from escape.bernina import diffraction as dif
+    if not hasattr(pytest.importorskip("hklforge.solve"), "_energy_limits"):
+        pytest.skip("hklforge < 0.2.2: no free energy")
+    app.ctrl["eta"].value, app.ctrl["chi"].value = 20.0, 45.0
+    app.ctrl["mu_fixed"].value = True                 # crystal fixed: one held too many at 9 keV
+    assert not app.cols and app.energy_btn.layout.display == "flex"
+    assert "let the energy vary" == app.energy_btn.description and "mode['energy']" not in app.solve_msg.value
+    app.energy_btn.click()
+    assert app.energy_free() and app.energy_btn.layout.display == "none" and app.cols
+    assert app.df.index[0] == "energy" and "energy free" in app.energy_free_msg.value
+    app.select(0)
+    e = float(app.df.loc["energy", app.cols[0]])
+    assert abs(e - 8174.9) < 0.1 and app.ctrl["energy"].value == pytest.approx(e, abs=1e-3)
+    # everything downstream at that energy: Bragg condition, the 3D view's |k|
+    angles = dif.solution_angles(app.df, app.cols[0])
+    assert np.allclose(app.sample.hkl_at(angles, app.energy()), app.hkl(), atol=1e-4)
+    assert _payload(app)["kMag"] == pytest.approx(dif.k_magnitude(e), rel=1e-6)
+    # limits that exclude it
+    app.ctrl["energy_min"].value, app.ctrl["energy_max"].value = "9000", "12000"
+    assert not app.cols and "9000 - 12000" in app.solve_msg.value
+    # one held less: complete at a fixed energy, so the app offers to fix it again
+    app.ctrl["mu_fixed"].value = False
+    assert app.energy_btn.description == "fix the energy" and app.energy_btn.layout.display == "flex"
+    app.energy_btn.click()
+    assert not app.energy_free() and app.cols and "energy" not in app.df.index
+    # stored and read back
+    app.ctrl["energy_free"].value = True
+    cfg = json.loads(json.dumps(app.current_config(everything=True)))
+    assert cfg["energy_free"] == {"free": True, "min": "9000", "max": "12000"}
+    new = ReflectionsApp()
+    new._suspend = True
+    new.apply_config(cfg)
+    new._suspend = False
+    assert new.energy_free() and new.energy_limits() == (9000.0, 12000.0)
+
+
+def test_cif_structure_kept_in_config_and_removable(app):
+    content = (DATA / "Bi2Se3.cif").read_bytes()
+    app._on_cif({"new": ({"name": "Bi2Se3.cif", "content": memoryview(content)},)})
+    assert app.cif_clear.layout.display == "flex"
+    cfg = json.loads(json.dumps(app.current_config(everything=True)))
+    assert cfg["version"] == 3 and len(cfg["structure"]["sites"]) == len(app.structure.sites)
+    new = ReflectionsApp()
+    new._suspend = True
+    new.apply_config(cfg)
+    new._suspend = False
+    new.recompute()
+    assert new.structure is not None and new.structure.name == app.structure.name
+    assert len(new.structure.atoms()[1]) == len(app.structure.atoms()[1])
+    assert "CIF" in new.crystal_msg.value and new.cif_clear.layout.display == "flex"
+    # a config whose sample had no CIF clears it; so does the button
+    new._suspend = True
+    new.apply_config({"sample": cfg["sample"]})
+    new._suspend = False
+    assert new.structure is None
+    app._clear_cif()
+    assert app.structure is None and app.cif_clear.layout.display == "none"
+    assert "structure" not in app.current_config(everything=True)
+
+
+def test_link_carries_the_whole_state(app):
+    from urllib.parse import parse_qs, unquote, urlsplit
+
+    from bernina_prep import reflections_app as ra
+    content = (DATA / "Bi2Se3.cif").read_bytes()
+    app._on_cif({"new": ({"name": "Bi2Se3.cif", "content": memoryview(content)},)})
+    app.ctrl["orientations"].value = "(0,0,1) > up\n(1,0,0) > beam"
+    app.ctrl["h"].value, app.ctrl["k"].value, app.ctrl["l"].value = 0.0, 0.0, 6.0
+    app.ctrl["energy"].value = 9500.0
+    app.filters["delta"][1].value = "120"
+    app.page_address = "http://localhost:8866/voila/render/apps/diffraction_reflections.ipynb?x=1"
+    links = app.make_link()
+    assert set(links) == {"this address", "Binder", "in the browser"}
+    assert all(len(u) < ra.LINK_LONG for u in links.values()) and "a config file" not in app.link_html.value
+    here = urlsplit(links["this address"])
+    assert parse_qs(here.query)["x"] == ["1"] and here.path.endswith("diffraction_reflections.ipynb")
+    # Binder hands the state on inside urlpath
+    urlpath = unquote(parse_qs(urlsplit(links["Binder"]).query)["urlpath"][0])
+    assert urlpath.startswith("voila/render/apps/diffraction_reflections.ipynb?state=")
+    assert ra.state_param(urlpath) == ra.state_param(links["in the browser"]) == ra.state_param(links["this address"])
+    # a new session at that address: the link wins over what the browser remembers
+    new = ReflectionsApp()
+    new.state_from_view.value = json.dumps({"kind": "offer", "address": links["in the browser"],
+                                            "state": {"energy": 7000.0}})
+    assert new.ctrl["energy"].value == 9500.0 and new.hkl() == [0.0, 0.0, 6.0]
+    assert new.filters["delta"][1].value == "120" and new.ctrl["orientations"].value.startswith("(0,0,1)")
+    assert new.structure is not None and new.structure.name == app.structure.name
+    assert "the link" in new.restore_note.value and new.page_address == links["in the browser"]
+    # a Binder session address is not offered as a link of its own
+    assert "this address" not in ra.state_links("abc", "https://hub.mybinder.org/user/x-1/voila/render/a.ipynb")
+
+
+def test_link_from_voila_query_string_and_bad_link(app, monkeypatch):
+    from bernina_prep import reflections_app as ra
+    param = ra.encode_link_state({"energy": 8123.0, "hkl": {"h": 2.0, "k": 2.0, "l": 0.0}})
+    monkeypatch.setenv("QUERY_STRING", f"state={param}")
+    app.state_from_view.value = json.dumps({"kind": "offer"})        # an older page: no address
+    assert app.ctrl["energy"].value == 8123.0 and app.hkl() == [2.0, 2.0, 0.0]
+    new = ReflectionsApp()
+    new.state_from_view.value = json.dumps({"kind": "offer", "address": "http://a/b?state=nonsense",
+                                            "state": {"energy": 7000.0}})
+    assert "could not be read" in new.restore_note.value and new.ctrl["energy"].value == 7000.0

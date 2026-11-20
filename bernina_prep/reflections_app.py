@@ -21,7 +21,10 @@ import contextlib
 import html
 import io
 import json
+import os
+import zlib
 from datetime import datetime
+from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 from pathlib import Path
 
 import ipywidgets as widgets
@@ -64,6 +67,9 @@ ROW_LABEL_W, COL_W = 70, 84
 SELECTED_BG = "#cfe8fb"
 HKL_DECIMALS = 4
 INPUT_W = "420px"
+ENERGY_LIMITS = (1000.0, 30000.0)               # eV, the energy field's range
+ENERGY_HINT = "; or let the energy vary: mode['energy'] = (lo, hi) in eV"   # hklforge's ModeError
+CONFIG_VERSION = 3        # 2: separate reference; 3: CIF structure, free energy
 SEL_CONFIG, SEL_ZERO = "config", "zero"          # keys kept for stored states
 POSITION_NAMES = {SEL_CONFIG: "constraint configuration", SEL_ZERO: "zero position"}
 
@@ -119,6 +125,15 @@ virtual angles of that reflection (2theta, qaz, beta, betaout, psi, tau, omega; 
 sample angles, alpha, betain and naz are the same for both). The 3D view draws that
 second detector position translucent, with its own cut of the Ewald sphere.</p>
 
+<p><b>Energy as an unknown.</b> <i>let the energy vary, within</i> (reflection tab)
+makes the photon energy one more unknown, between the limits given (empty: 1 - 30 keV).
+Hold one angle more than usual - e.g. the whole crystal (Laue-like: which energy brings
+(h,k,l) into Bragg condition, and where the detector goes) or the detector (which
+energy and sample angles reach it there). Each solution then has its own energy, and the
+energy field follows the selected solution, so the 3D view and the tools use it. When
+a mode has one held angle too many, the solutions panel offers <i>let the energy
+vary</i> directly.</p>
+
 <p><b>3D view.</b> Click a solution column to drive the drawing. <b>constraint
 configuration</b> shows the angle values entered under <i>angles</i> (also the values of
 the held constraints), whether or not they solve anything, and the line under the table
@@ -140,13 +155,76 @@ crossings; hover or click for the values at a point; <i>crystal</i> lists the al
 
 <p><b>Config.</b> <i>load setup</i> applies a Bernina setup (held angles and ranges,
 the same as eco's <code>set_constraints</code>); <i>store config&hellip;</i> writes the
-inputs to a JSON file, <i>load config</i> reads one back (also files of the
-earlier diffcalc version). <i>In this browser</i>: the app remembers its state
+inputs to a JSON file (with a CIF's atoms), <i>load config</i> reads one back (also
+files of the earlier diffcalc version). <i>link to this state</i> gives web addresses
+that open the app as it is now (on Binder, in the browser version), with everything in
+the address itself - nothing is stored anywhere. <i>In this browser</i>: the app remembers its state
 (switch it off there) and keeps snapshots - take named ones, or go back to an
 automatic one (last session, every 10 minutes, before "start fresh" or a
 restore); each can be downloaded as a config file. Nothing leaves the browser.</p>
 </div>
 """
+
+
+# ---------------------------------------------------------------- links
+# A link carries the whole state (autosave_state(), with the CIF's atoms) as
+# ?state=<base64url of zlib-compressed JSON>. It is read from the address of
+# the page the app runs in, which the 3D page reports (hklforge >= 0.2.3),
+# or under voila from the kernel's QUERY_STRING. Binder passes it on inside
+# urlpath; the browser version's static server ignores it.
+
+LINK_PARAM = "state"
+APP_NOTEBOOK = "apps/diffraction_reflections.ipynb"
+BINDER_URL = "https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD"
+BROWSER_URL = "https://swissfel.github.io/bernina-scripts/voici/render/diffraction_reflections.html"
+LINK_LONG = 6000          # characters: longer links may be refused by some servers
+
+
+def encode_link_state(state: dict) -> str:
+    raw = json.dumps(state, separators=(",", ":"), ensure_ascii=False).encode()
+    return base64.urlsafe_b64encode(zlib.compress(raw, 9)).rstrip(b"=").decode()
+
+
+def decode_link_state(text: str) -> dict:
+    text = str(text).strip()
+    data = zlib.decompress(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
+    state = json.loads(data.decode())
+    if not isinstance(state, dict):
+        raise ValueError("not an app state")
+    return state
+
+
+def state_param(address: str | None) -> str | None:
+    """The ?state=... (or #state=...) of an address, or None."""
+    if not address:
+        return None
+    parts = urlsplit(str(address))
+    for part in (parts.query, parts.fragment):
+        values = parse_qs(part).get(LINK_PARAM)
+        if values:
+            return values[0]
+    return None
+
+
+def with_state(address: str, param: str) -> str:
+    """``address`` with its ?state= set to ``param`` (other query parameters kept, no fragment)."""
+    parts = urlsplit(address)
+    query = [(k, v) for k, vs in parse_qs(parts.query).items() for v in vs if k != LINK_PARAM]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query + [(LINK_PARAM, param)]), ""))
+
+
+def state_links(param: str, address: str | None = None) -> dict:
+    """{name: url} opening the app with this state: on Binder, in the browser
+    version and, when known, at the address it runs at now."""
+    links = {}
+    here = urlsplit(address or "")
+    # not a JupyterHub session (Binder's /user/...: gone with the session), not the browser version
+    if (here.scheme in ("http", "https") and "/user/" not in here.path
+            and here.netloc != urlsplit(BROWSER_URL).netloc):
+        links["this address"] = with_state(address, param)
+    links["Binder"] = f"{BINDER_URL}?urlpath=" + quote(f"voila/render/{APP_NOTEBOOK}?{LINK_PARAM}={param}", safe="")
+    links["in the browser"] = with_state(BROWSER_URL, param)
+    return links
 
 
 def _num_or_none(text):
@@ -340,6 +418,8 @@ class ReflectionsApp:
                                           placeholder="e.g. R-3m, Fd-3m, 166", layout=L(width="240px"),
                                           style={"description_width": "84px"})
         self.cif = w.FileUpload(accept=".cif", multiple=False, description="CIF ...", layout=L(width="100px"))
+        self.cif_clear = w.Button(description="remove CIF", layout=L(width="100px", display="none"),
+                                  tooltip="forget the CIF's atoms (|F|); the cell and space group stay")
         self.crystal_msg = w.HTML()
         self.ctrl["surface_normal"] = w.Text(value=s["surface_normal"], description="surface normal (h,k,l)",
                                              placeholder="empty: none", layout=L(width="360px"),
@@ -355,12 +435,20 @@ class ReflectionsApp:
         for n in "hkl":
             self.ctrl[n] = w.FloatText(value=1.0, step=0.1, description=n, layout=L(width=HKL_W),
                                        style={"description_width": "20px"})
-        self.ctrl["energy"] = w.BoundedFloatText(value=9000, min=1000, max=30000, step=10,
+        self.ctrl["energy"] = w.BoundedFloatText(value=9000, min=ENERGY_LIMITS[0], max=ENERGY_LIMITS[1], step=10,
                                                  description="energy [eV]", layout=L(width="190px"),
                                                  style={"description_width": "80px"})
-        self.energy_slider = w.FloatSlider(value=9000, min=1000, max=30000, step=10, readout=False,
+        self.energy_slider = w.FloatSlider(value=9000, min=ENERGY_LIMITS[0], max=ENERGY_LIMITS[1], step=10,
+                                           readout=False,
                                            continuous_update=False, layout=L(width="170px"))
         w.link((self.ctrl["energy"], "value"), (self.energy_slider, "value"))
+        # the energy as one more unknown, within limits (hklforge >= 0.2.2); then the
+        # energy above follows the selected solution (select), so every tool uses it
+        self.ctrl["energy_free"] = w.Checkbox(value=False, description="let the energy vary, within",
+                                              indent=False, layout=L(width="190px"))
+        self.ctrl["energy_min"] = w.Text(value="", placeholder=f"{ENERGY_LIMITS[0]:g}", layout=L(width="70px"))
+        self.ctrl["energy_max"] = w.Text(value="", placeholder=f"{ENERGY_LIMITS[1]:g}", layout=L(width="70px"))
+        self.energy_free_msg = w.HTML()
         self.ctrl["two"] = w.Checkbox(value=False, description="keep a second reflection in Bragg condition",
                                       indent=False, layout=L(width="320px"))
         for n in ("h2", "k2", "l2"):
@@ -400,11 +488,14 @@ class ReflectionsApp:
             w.HBox([c[k] for k in ("uc_a", "uc_b", "uc_c", "uc_alpha", "uc_beta", "uc_gamma")],
                    layout=L(flex_flow="row wrap")),
             w.HBox([self.system, self.system_btn]),
-            w.HBox([c["space_group"], self.cif]), self.crystal_msg,
+            w.HBox([c["space_group"], self.cif, self.cif_clear]), self.crystal_msg,
             c["surface_normal"], c["reference"], c["orientations"],
         ])
         self.tab_reflection = w.VBox([
-            w.HBox([c["h"], c["k"], c["l"]]), w.HBox([c["energy"], self.energy_slider]), self.target_msg,
+            w.HBox([c["h"], c["k"], c["l"]]), w.HBox([c["energy"], self.energy_slider]),
+            w.HBox([c["energy_free"], c["energy_min"], w.Label("to"), c["energy_max"], w.Label("eV")],
+                   layout=L(align_items="center")),
+            self.energy_free_msg, self.target_msg,
             w.HTML("<b>two reflections</b>"), c["two"], w.HBox([c["h2"], c["k2"], c["l2"]]), c["detector"],
         ])
         # scan one held value: how many solutions (passing the min/max) along it
@@ -460,6 +551,13 @@ class ReflectionsApp:
                                    layout=L(width="150px"))
         self.download_link = w.HTML()
         self.config_msg = w.HTML()
+        # a link that opens the app in this state (everything, with the CIF's atoms)
+        self.link_btn = w.Button(description="link to this state", icon="link", layout=L(width="150px"),
+                                 tooltip="a web address that opens the app as it is now (sample with "
+                                         "the CIF, reflection, angles, min/max, tools)")
+        self.link_html = w.HTML()
+        self.link_text = w.Textarea(layout=L(width="400px", height="60px", display="none"))
+        self.page_address = None          # where the app runs, as the 3D page reports it
         self.store_panel = w.VBox(
             [w.HTML('<div style="font-size:11px;color:#666">include in the file (unchecked groups are '
                     'left out, so a file can be a partial template):</div>')]
@@ -498,7 +596,8 @@ class ReflectionsApp:
             layout=L(border_top="1px solid #ddd", margin="10px 0 0 0"))
         self._set_memory_enabled(False)
         self.tab_config = w.VBox([self.preset, self.preset_msg, w.HBox([self.store_btn, self.upload]),
-                                  self.store_panel, self.config_msg, self.memory_box])
+                                  self.store_panel, self.config_msg, self.link_btn, self.link_html,
+                                  self.link_text, self.memory_box])
 
     # ================================================================ solutions, view
 
@@ -508,6 +607,8 @@ class ReflectionsApp:
         self.position_buttons = widgets.HBox([], layout=L(margin="0 0 4px 0"))
         self.table_html = widgets.HTML()
         self.solve_msg = widgets.HTML()
+        # offered when hklforge says the energy would make the mode complete (or the opposite)
+        self.energy_btn = widgets.Button(layout=L(width="auto", display="none"))
         self.config_hkl = widgets.HTML()
 
     def _build_view(self):
@@ -697,7 +798,8 @@ class ReflectionsApp:
             "inputs": Panel("inputs", self.input_tabs),
             "solutions": Panel("solutions", w.VBox([
                 w.HTML('<span style="font-size:11px;color:#666">click a column to show it in the 3D view</span>'),
-                self.solve_msg, self.position_buttons, self.solution_buttons, self.table_html,
+                widgets.HBox([self.solve_msg, self.energy_btn], layout=L(align_items="center")),
+                self.position_buttons, self.solution_buttons, self.table_html,
                 self.config_hkl])),
             "view": Panel("3D view", w.VBox([self.view_frame, self.payload_holder, self.det_from_view,
                                              self.state_from_view])),
@@ -759,11 +861,13 @@ class ReflectionsApp:
             hi.observe(self.recompute, names="value")
         self.system_btn.on_click(self._apply_system)
         self.cif.observe(self._on_cif, names="value")
+        self.cif_clear.on_click(self._clear_cif)
         self.preset.observe(lambda ch: self.load_preset(ch["new"]), names="value")
         self.store_btn.on_click(self._toggle_store)
         self.make_btn.on_click(self._on_make)
         self.file_name.observe(lambda _c: setattr(self.download_link, "value", ""), names="value")
         self.upload.observe(self._on_upload, names="value")
+        self.link_btn.on_click(self.make_link)
         self.layout_switch.observe(self.arrange, names="value")
         self.layout_switch.observe(self._view_controls_for_layout, names="value")
         self.view_height.observe(lambda _c: self.push_view(), names="value")
@@ -798,6 +902,7 @@ class ReflectionsApp:
         if self.s_figure.canvas is not None:
             self.s_figure.canvas.mpl_connect("button_press_event", self._scan_click)
         self.g_btn.on_click(self.run_grazing)
+        self.energy_btn.on_click(lambda _b: setattr(self.ctrl["energy_free"], "value", not self.energy_free()))
 
     def _round_hkl(self, change):
         rounded = round(float(change["new"]), HKL_DECIMALS)
@@ -827,7 +932,19 @@ class ReflectionsApp:
                 cons[name] = True
         if self.ctrl["two"].value:
             cons["h2"] = [float(self.ctrl[n].value) for n in ("h2", "k2", "l2")]
+        if self.energy_free():
+            cons["energy"] = self.energy_limits()
         return cons
+
+    def energy_free(self) -> bool:
+        return bool(self.ctrl["energy_free"].value)
+
+    def energy_limits(self) -> tuple:
+        """(lo, hi) eV within which a free energy may go; empty fields: the energy field's range."""
+        lo, hi = _num_or_none(self.ctrl["energy_min"].value), _num_or_none(self.ctrl["energy_max"].value)
+        lo = ENERGY_LIMITS[0] if lo is None else min(max(lo, ENERGY_LIMITS[0]), ENERGY_LIMITS[1])
+        hi = ENERGY_LIMITS[1] if hi is None else min(max(hi, ENERGY_LIMITS[0]), ENERGY_LIMITS[1])
+        return (lo, hi) if lo <= hi else (hi, lo)
 
     def ranges(self) -> dict:
         out = {}
@@ -867,21 +984,36 @@ class ReflectionsApp:
             self._no_solutions(_err(f"sample: {exc}"))
             return
         cons = self.constraints()
-        held = len(cons)
-        self.held_msg.value = ("" if held == 3 else
-                               _note(f"{held} constraint(s) held; three are needed for a finite set "
-                                     "of solutions (the second reflection counts as one)"))
+        free = "energy" in cons
+        held, need = len(cons) - free, 3 + free
+        self.held_msg.value = ("" if held == need else
+                               _note(f"{held} constraint(s) held; {'four' if free else 'three'} are needed for "
+                                     "a finite set of solutions (the second reflection counts as one"
+                                     f"{'; one more because the energy may vary' if free else ''})"))
+        self.energy_free_msg.value = (_note(f"solved with the energy free in {cons['energy'][0]:g} - "
+                                            f"{cons['energy'][1]:g} eV (one more angle held); the energy above "
+                                            "follows the selected solution", "#666") if free else "")
+        self.energy_btn.layout.display = "none"
         try:
             df = self.sample.solve(self.hkl(), self.energy(), cons, self.ctrl["detector"].value)
         except Exception as exc:
-            self._no_solutions(_err(exc))
+            text = str(exc)
+            if ENERGY_HINT in text:          # hklforge: over-determined, the energy could take one more
+                text = text.replace(ENERGY_HINT, "")
+                self.energy_btn.description, self.energy_btn.layout.display = "let the energy vary", "flex"
+            elif free and "needs one more circle or constraint held" in text:
+                self.energy_btn.description, self.energy_btn.layout.display = "fix the energy", "flex"
+            self._no_solutions(_err(text))
             return
         if self.ctrl["two"].value and len(df.columns):
             df = pd.concat([df, pd.DataFrame(self._two_reflection_rows(df, cons["h2"]))])
         self.df = df
         self.cols = [c for c in df.columns if dif.passes(df[c], self.ranges())]
         hidden = len(df.columns) - len(self.cols)
-        if df.empty:
+        if df.empty and free:
+            self.solve_msg.value = _note(f"no solution with the energy in {cons['energy'][0]:g} - "
+                                         f"{cons['energy'][1]:g} eV")
+        elif df.empty:
             beyond = np.linalg.norm(self.sample.B @ np.asarray(self.hkl())) > 2 * dif.k_magnitude(self.energy())
             self.solve_msg.value = _note("no solution: 2 theta would exceed 180, raise the energy" if beyond
                                          else "no solution under these constraints")
@@ -920,11 +1052,12 @@ class ReflectionsApp:
         that keeps both on the face, and - for each reflection the detector
         is not on - where the detector would sit on it and the virtual angles
         of its outgoing beam ("<angle> @<n>"; the sample angles are shared)."""
-        h1, energy = self.hkl(), self.energy()
+        h1 = self.hkl()
         q_angle = dif.angle_between(self.sample, h1, h2)
         rows = {}
         for c in df.columns:
             a = dif.solution_angles(df, c)
+            energy = self._solution_energy(df, c)
             sp = self.sample.spots(a, [h1, h2], energy)
             r = {"∠(Q1,Q2)": q_angle, "∠(k′1,k′2)": sp["separation"], "tdet max [mm]": sp["tdet_max"]}
             for n in self._other_reflections():
@@ -1027,8 +1160,23 @@ class ReflectionsApp:
             return dif.solution_angles(self.df, col), str(col)
         return {}, POSITION_NAMES[SEL_ZERO]
 
+    def _solution_energy(self, df, col) -> float:
+        """A solution's own energy (the energy free), else the energy field's."""
+        if "energy" in df.index and np.isfinite(df.loc["energy", col]):
+            return float(df.loc["energy", col])
+        return self.energy()
+
     def select(self, sel):
         self.selected = sel
+        if (self.energy_free() and isinstance(sel, int) and self.df is not None and sel < len(self.cols)
+                and "energy" in self.df.index):
+            e = round(self._solution_energy(self.df, self.cols[sel]), 3)
+            if ENERGY_LIMITS[0] <= e <= ENERGY_LIMITS[1] and e != self.ctrl["energy"].value:
+                self._suspend, was = True, self._suspend
+                try:
+                    self.ctrl["energy"].value = e   # every tool and the 3D view now use it
+                finally:
+                    self._suspend = was
         for b in self.position_buttons.children + self.solution_buttons.children:
             b.button_style = "info" if getattr(b, "_sel", None) == sel else ""
         self._render_table()
@@ -1129,12 +1277,10 @@ class ReflectionsApp:
         except Exception as exc:
             self.crystal_msg.value = _err(f"CIF: {exc}")
             return
-        self.structure = st
         self._suspend = True
         try:
+            self._set_structure(st)
             self.ctrl["space_group"].value = st.space_group.name if st.space_group is not None else ""
-            self.g_formula.value = st.formula
-            self.g_density.value = round(st.density, 4)
         finally:
             self._suspend = False
         self._set_cell(st.cell)
@@ -1144,6 +1290,29 @@ class ReflectionsApp:
                          "absences are not checked")
         if notes:
             self.crystal_msg.value = _note(html.escape("CIF: " + "; ".join(notes)))
+
+    def _set_structure(self, st, notes: list | None = None):
+        """The CIF's structure: a ``Structure``, its ``to_dict()`` (from a config
+        or link) or None. Fills the grazing tab's formula and density from it."""
+        if isinstance(st, dict):
+            try:
+                st = cry.Structure.from_dict(st)
+            except Exception as exc:
+                st = None
+                if notes is not None:
+                    notes.append(f"the CIF structure could not be read back ({exc})")
+        self.structure = st
+        self.cif_clear.layout.display = "none" if st is None else "flex"
+        if st is not None:
+            with contextlib.suppress(Exception):       # formula and density need xraydb
+                self.g_formula.value = st.formula
+                self.g_density.value = round(st.density, 4)
+
+    def _clear_cif(self, _b=None):
+        self._set_structure(None)
+        with contextlib.suppress(Exception):           # so the same file can be loaded again
+            self.cif.value = ()
+        self.recompute()
 
     # ================================================================ presets and config files
 
@@ -1175,13 +1344,17 @@ class ReflectionsApp:
 
     def current_config(self, everything: bool = False) -> dict:
         inc = {k: everything or b.value for k, b in self.include.items()}
-        cfg = {"version": 2}
+        cfg = {"version": CONFIG_VERSION}
         if inc["sample"]:
             cfg["sample"] = {k: self.ctrl[k].value for k in DEFAULT_SAMPLE}
+            if self.structure is not None:          # the CIF's atoms, so |F| and its symmetry come back
+                cfg["structure"] = self.structure.to_dict()
         if inc["hkl"]:
             cfg["hkl"] = {n: self.ctrl[n].value for n in ("h", "k", "l", "two", "h2", "k2", "l2", "detector")}
         if inc["energy"]:
             cfg["energy"] = self.ctrl["energy"].value
+            cfg["energy_free"] = {"free": self.energy_free(), "min": self.ctrl["energy_min"].value,
+                                  "max": self.ctrl["energy_max"].value}
         if inc["angles"]:
             cfg["angles"] = {n: self.ctrl[n].value for n in dif.CIRCLES + dif.VIRTUAL_CONSTRAINTS}
         if inc["fixed"]:
@@ -1207,6 +1380,41 @@ class ReflectionsApp:
         state["selected"] = self.selected
         return state
 
+    def link_state(self) -> dict:
+        """What a link carries: everything autosave_state() has (not the 3D page's display)."""
+        return self.autosave_state()
+
+    def make_link(self, _b=None) -> dict:
+        """Show the links to the current state; returns {name: url}."""
+        links = state_links(encode_link_state(self.link_state()), self.page_address)
+        size = max(len(u) for u in links.values())
+        warn = (_note(f" these are long ({size} characters): some servers refuse such addresses; "
+                      "a config file always works", "#a60") if size > LINK_LONG else "")
+        self.link_html.value = (
+            '<div style="font-size:12px">open the app in this state: '
+            + " &middot; ".join(f'<a href="{html.escape(u)}" target="_blank">{html.escape(k)}</a>'
+                                for k, u in links.items())
+            + ' <span style="color:#666">(right-click to copy; the Binder one below to paste)</span>'
+            + warn + "</div>")
+        self.link_text.value = links.get("this address") or links["Binder"]
+        self.link_text.layout.display = "flex"
+        return links
+
+    def _link_from_address(self, address: str | None) -> tuple[bool, str]:
+        """Apply the state a link carries in ``address`` (or, under voila, in the
+        kernel's QUERY_STRING): (applied, why not if there was one that failed)."""
+        param = state_param(address)
+        if param is None and os.environ.get("QUERY_STRING"):
+            param = state_param("?" + os.environ["QUERY_STRING"])
+        if param is None:
+            return False, ""
+        try:
+            state = decode_link_state(param)
+        except Exception as exc:
+            return False, f"the link's state could not be read ({exc})"
+        self.restore_state(state, what="the link")
+        return True, ""
+
     def _state_from_view(self, change):
         try:
             report = json.loads(change["new"] or "{}")
@@ -1219,11 +1427,18 @@ class ReflectionsApp:
             return
         self._restore_done = True
         self._apply_memory_report(report)
+        self.page_address = report.get("address")
+        link_error = ""
         try:
-            if report.get("state"):
+            linked, link_error = self._link_from_address(self.page_address)
+            if not linked and report.get("state"):   # a link wins over what this browser remembers
                 self.restore_state(report["state"], report.get("display"), report.get("savedText", ""))
         except Exception as exc:
             self.restore_note.value = _err(f"could not restore the remembered state: {exc}")
+            self.restore_box.layout.display = "flex"
+        if link_error:
+            self.restore_note.value = (_err(link_error) + "<br>" + self.restore_note.value
+                                       if self.restore_box.layout.display == "flex" else _err(link_error))
             self.restore_box.layout.display = "flex"
         self.push_view()
 
@@ -1243,9 +1458,10 @@ class ReflectionsApp:
         if sel in (SEL_CONFIG, SEL_ZERO) or (isinstance(sel, int) and 0 <= sel < len(self.cols)):
             self.select(sel)
         when = f" (saved {html.escape(saved_text)})" if saved_text else ""
-        self.restore_note.value = _note(f"continued from {html.escape(what)}{when}; a CIF's atoms are not "
-                                        "remembered; earlier states: <i>config</i> tab, <i>in this browser</i>",
-                                        "#282")
+        extra = "; ".join(self._config_notes)
+        self.restore_note.value = _note(f"continued from {html.escape(what)}{when}"
+                                        f"{'; ' + html.escape(extra) if extra else ''}; earlier states: "
+                                        "<i>config</i> tab, <i>in this browser</i>", "#282")
         self.restore_box.layout.display = "flex"
 
     def _start_fresh(self, _b=None):
@@ -1407,9 +1623,18 @@ class ReflectionsApp:
             if name in self.ctrl:
                 self.ctrl[name].value = value
                 applied.append(name)
+        if "sample" in cfg:                       # a sample without "structure" had no CIF
+            self._set_structure(cfg.get("structure"), notes)
+            applied.append("structure")
         if "energy" in cfg:
             self.ctrl["energy"].value = cfg["energy"]
             applied.append("energy")
+        ef = cfg.get("energy_free")
+        if isinstance(ef, dict):
+            self.ctrl["energy_free"].value = bool(ef.get("free"))
+            self.ctrl["energy_min"].value = str(ef.get("min") or "")
+            self.ctrl["energy_max"].value = str(ef.get("max") or "")
+            applied.append("energy_free")
         for name, value in (cfg.get("angles") or {}).items():
             name = legacy(name)
             if name in self.ctrl and name not in dif.BOOL_CONSTRAINTS and not isinstance(value, bool):

@@ -23,7 +23,7 @@ mkdir -p "$out/wheels" "$out/content"
 "$out/venv/bin/pip" install -q voici ipywidgets ipympl
 "$out/venv/bin/pip" wheel -q --no-deps -w "$out/wheels" ..
 rm -rf ../build                       # setuptools' scratch folder
-"$out/venv/bin/pip" wheel -q --no-deps -w "$out/wheels" "${HKLFORGE:-hklforge>=0.2.1}" "${ESCAPE:-escape-fel>=0.2.19}"
+"$out/venv/bin/pip" wheel -q --no-deps -w "$out/wheels" "${HKLFORGE:-hklforge>=0.2.3}" "${ESCAPE:-escape-fel>=0.3.5}"
 wheel=$(ls "$out"/wheels/bernina_prep-*.whl)
 hklforge=$(ls "$out"/wheels/hklforge-*.whl)
 escape=$(ls "$out"/wheels/escape_fel-*.whl)

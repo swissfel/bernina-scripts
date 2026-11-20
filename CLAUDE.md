@@ -135,8 +135,9 @@ A change to a calculation or to the 3D page goes to hklforge/escape; for a
 local test install them editable into the pixi envs
 (`.pixi/envs/<env>/bin/python -m pip install --no-deps -e ../hklforge -e ../escape-fel`)
 and build the browser version with `HKLFORGE=... ESCAPE=... lite/build.sh`.
-Binder and the Pages build take the released versions (hklforge >= 0.2.1,
-escape-fel >= 0.2.19, the first with escape.bernina).
+Binder and the Pages build take the released versions (hklforge >= 0.2.3:
+`Structure.to_dict`, the page's address in its offer, free energy;
+escape-fel >= 0.3.5: `energy` passed through to hklforge).
 
 ## Diffraction conventions (escape.bernina.diffraction)
 
@@ -172,6 +173,26 @@ escape-fel >= 0.2.19, the first with escape.bernina).
   (gamma, delta) as the diffractometer's own gamma/delta (the THC app says
   so), with (gamma, delta) ≡ (gamma + 180, 180 − delta). Otti is left out:
   its precomputed envelope is a single curve without a stated inside.
+- **Free energy** (hklforge >= 0.2.2): `constraints["energy"] = (lo, hi)`
+  eV makes the energy one more unknown (one more angle held); solutions get
+  an `energy` row. In the app, *let the energy vary* sets it; `select()`
+  writes the selected solution's energy into the energy field (suspended, no
+  re-solve), so the 3D view and every tool use it. hklforge's ModeError
+  ends in `ENERGY_HINT` when freeing the energy would help: the app strips
+  it and shows a *let the energy vary* button (and *fix the energy* for the
+  opposite message). Empty limits = the energy field's 1-30 keV.
+- **CIF structure** is kept: config version 3 stores `structure`
+  (`Structure.to_dict()`: sites, space group, ops only if not the group's)
+  with the sample group; a sample without it clears the CIF. Autosave,
+  snapshots and links carry it too.
+- **Links**: *link to this state* encodes `autosave_state()` (not the 3D
+  page's display) as `?state=` base64url(zlib(JSON)), ~1 KB with a CIF.
+  On the first offer the app reads it from the page's `address` (the 3D
+  page reports `parent.location`, hklforge >= 0.2.3, so it works under voila
+  and voici alike), else from voila's `QUERY_STRING`; a link wins over the
+  remembered state (that stays a snapshot). Binder links pass it inside
+  `urlpath`; a JupyterHub `/user/` address is not offered (dies with the
+  session). Verified end to end in voila + Chrome (CDP), 2026-11-20.
 - **xraydb is optional**: without it there are no structure factors and
   grazing incidence needs δ and β typed in.
 - **Browser memory**: the 3D page keeps the app's state, snapshots and the
