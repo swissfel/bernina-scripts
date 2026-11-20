@@ -42,6 +42,14 @@ try:
     from hklforge.view import structure_factor_nodes
 except ImportError:                    # hklforge without the structure-factor spheres
     structure_factor_nodes = None
+try:
+    from hklforge.view import structure_atoms
+except ImportError:                    # hklforge without the real-space structure
+    structure_atoms = None
+try:
+    from hklforge.crystal import examples as cif_examples
+except ImportError:                    # hklforge without example CIFs
+    cif_examples = None
 from hklforge.virtual import virtual_angles
 
 from escape.bernina import detector_view as dv
@@ -464,6 +472,10 @@ class ReflectionsApp:
                                           placeholder="e.g. R-3m, Fd-3m, 166", layout=L(width="240px"),
                                           style={"description_width": "84px"})
         self.cif = w.FileUpload(accept=".cif", multiple=False, description="CIF ...", layout=L(width="100px"))
+        names = cif_examples.names() if cif_examples is not None else []
+        self.cif_example = w.Dropdown(options=[("example CIF ...", "")] + [(cif_examples.title(n), n) for n in names],
+                                      value="", layout=L(width="190px", display="flex" if names else "none"),
+                                      tooltip="load one of hklforge's example structures, as if uploaded")
         self.cif_clear = w.Button(description="remove CIF", layout=L(width="100px", display="none"),
                                   tooltip="forget the CIF's atoms (|F|); the cell and space group stay")
         self.crystal_msg = w.HTML()
@@ -544,7 +556,7 @@ class ReflectionsApp:
             w.HBox([c[k] for k in ("uc_a", "uc_b", "uc_c", "uc_alpha", "uc_beta", "uc_gamma")],
                    layout=L(flex_flow="row wrap")),
             w.HBox([self.system, self.system_btn]),
-            w.HBox([c["space_group"], self.cif, self.cif_clear]), self.crystal_msg,
+            w.HBox([c["space_group"], self.cif, self.cif_example, self.cif_clear]), self.crystal_msg,
             c["surface_normal"], c["reference"], c["orientations"],
         ])
         self.tab_reflection = w.VBox([
@@ -919,6 +931,7 @@ class ReflectionsApp:
             hi.observe(self.recompute, names="value")
         self.system_btn.on_click(self._apply_system)
         self.cif.observe(self._on_cif, names="value")
+        self.cif_example.observe(self._on_cif_example, names="value")
         self.cif_clear.on_click(self._clear_cif)
         self.preset.observe(lambda ch: self.load_preset(ch["new"]), names="value")
         self.store_btn.on_click(self._toggle_store)
@@ -1264,6 +1277,8 @@ class ReflectionsApp:
                            special_points=self._special_points())
         if structure_factor_nodes is not None:   # the 3D view's spheres (None: no structure)
             msg["structureFactors"] = self._structure_factors()
+        if structure_atoms is not None:          # the 3D view's real-space atoms (None: lattice points)
+            msg["structure"] = self._structure_atoms()
         if s is not None:      # sent as None too, so that emptying a field clears it in the view
             msg["nPhi"] = None if s.n_surface is None else [float(x) for x in s.n_surface]
             msg["refPhi"] = None if s.n_reference is None else [float(x) for x in s.n_reference]
@@ -1315,6 +1330,18 @@ class ReflectionsApp:
             self._sf_key, self._sf = key, sf
         return self._sf
 
+    def _structure_atoms(self) -> dict | None:
+        """The atoms of one cell for the 3D view's real-space drawing (cached), or None."""
+        if self.structure is None:
+            return None
+        if getattr(self, "_atoms_for", None) is not self.structure:
+            try:
+                self._atoms = structure_atoms(self.structure)
+            except Exception:
+                self._atoms = None
+            self._atoms_for = self.structure
+        return self._atoms
+
     def _special_points(self) -> dict | None:
         """Brillouin-zone special points of the cell and space group (cached), or None."""
         key = (tuple(self.cell().values()), self.ctrl["space_group"].value.strip(),
@@ -1356,8 +1383,21 @@ class ReflectionsApp:
         if not items:
             return
         item = items[0] if isinstance(items, (list, tuple)) else list(items.values())[0]
+        self._load_cif_text(cry.to_cif_text(item["content"]))
+
+    def _on_cif_example(self, change):
+        name = change["new"]
+        if not name:
+            return
         try:
-            st = cry.read_cif(cry.to_cif_text(item["content"]))
+            self._load_cif_text(cif_examples.cif_text(name))
+        finally:
+            self.cif_example.value = ""          # back to the prompt, so the same one can be chosen again
+
+    def _load_cif_text(self, text: str):
+        """A CIF (uploaded or an example): structure, space group and cell."""
+        try:
+            st = cry.read_cif(text)
         except Exception as exc:
             self.crystal_msg.value = _err(f"CIF: {exc}")
             return

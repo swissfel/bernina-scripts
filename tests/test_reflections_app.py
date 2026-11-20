@@ -625,3 +625,30 @@ def test_structure_factors_to_3d_view(app):
     app._clear_cif()
     app.push_view()
     assert _payload(app)["structureFactors"] is None
+
+
+def test_example_cifs_and_atoms_to_3d_view(app):
+    """The CIF row's example menu loads each of hklforge's example CIFs as an
+    upload would; the 3D view then gets the cell's atoms (real-space drawing),
+    and None (lattice points) after the CIF is removed."""
+    ex = pytest.importorskip("hklforge.crystal.examples")
+    view = pytest.importorskip("hklforge.view")
+    if not hasattr(view, "structure_atoms"):
+        pytest.skip("hklforge without the real-space structure")
+    names = [v for _, v in app.cif_example.options if v]
+    assert names == ex.names()
+    for name in names:
+        app.cif_example.value = name
+        assert app.cif_example.value == ""                      # back to the prompt
+        st = ex.load(name)
+        assert app.structure is not None and app.ctrl["uc_a"].value == pytest.approx(st.cell["a"])
+        assert app.ctrl["uc_gamma"].value == pytest.approx(st.cell["gamma"])
+        app.push_view()
+        atoms = _payload(app)["structure"]
+        assert atoms == view.structure_atoms(app.structure) and len(atoms["atoms"]) == len(st.atoms()[1])
+    app.cif_example.value = "Si"                                 # the same one twice in a row
+    app.cif_example.value = "Si"
+    assert app.structure.name == "Si"
+    app._clear_cif()
+    app.push_view()
+    assert _payload(app)["structure"] is None
