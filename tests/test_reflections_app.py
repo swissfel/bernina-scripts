@@ -510,3 +510,25 @@ def test_energy_and_second_reflection_are_constraints(app):
     app.apply_config({"fixed": {"mu": True}})
     app._suspend = False
     assert app.ctrl["energy_fixed"].value
+
+
+def test_link_includes_the_3d_views_display(app):
+    from bernina_prep import reflections_app as ra
+    app.state_from_view.value = json.dumps({"kind": "offer"})        # the page is there
+    links = app.make_link()                                         # at once, without the display
+    assert "display" not in ra.decode_link_state(ra.state_param(links["in the browser"]))
+    assert "settings follow" in app.link_html.value
+    op = next(o for o in _payload(app)["memory"]["ops"] if o.get("kind") == "link")
+    # the page keeps it as a "link" snapshot with its display and reports it back
+    display = {"showCell": True, "showEwald": False, "recScale": 2.5}
+    app.state_from_view.value = json.dumps({"kind": "memory", "ack": op["seq"], "snapshots": [
+        {"id": "a1", "name": "link", "kind": "link", "savedText": "now", "state": op["state"], "display": display}]})
+    assert "with the 3D view" in app.link_html.value and app._link_pending is None
+    state = ra.decode_link_state(ra.state_param(app.link_text.value))
+    assert state["display"] == display
+    assert any(lbl.startswith("link: ") for lbl, _ in app.snap_list.options)
+    # opened from that link, the view gets its display back
+    new = ReflectionsApp()
+    new.state_from_view.value = json.dumps({"kind": "offer", "address": app.link_text.value})
+    sent = _payload(new)["display"]                                  # still on the last push of the burst
+    assert {k: sent[k] for k in display} == display

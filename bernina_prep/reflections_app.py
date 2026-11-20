@@ -22,6 +22,7 @@ import html
 import io
 import json
 import os
+import time
 import zlib
 from datetime import datetime
 from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
@@ -174,6 +175,7 @@ restore); each can be downloaded as a config file. Nothing leaves the browser.</
 # or under voila from the kernel's QUERY_STRING. Binder passes it on inside
 # urlpath; the browser version's static server ignores it.
 
+DISPLAY_HOLD = 3.0        # s: how long a display block rides on the 3D view's pushes
 LINK_PARAM = "state"
 APP_NOTEBOOK = "apps/diffraction_reflections.ipynb"
 BINDER_URL = "https://mybinder.org/v2/gh/swissfel/bernina-scripts/HEAD"
@@ -384,6 +386,7 @@ class ReflectionsApp:
         self.cols = []
         self.selected = SEL_CONFIG
         self.display_settings = None
+        self._display_out = None      # (display, until): sent with every push for DISPLAY_HOLD seconds
         self._restore_done = False  # until the 3D page has offered the state it remembers
         self._forget = False
         self._memory_ops = []       # snapshot requests for the 3D page, numbered (see push_view)
@@ -569,6 +572,7 @@ class ReflectionsApp:
         self.link_html = w.HTML()
         self.link_text = w.Textarea(layout=L(width="400px", height="60px", display="none"))
         self.page_address = None          # where the app runs, as the 3D page reports it
+        self._link_pending = None         # the state of a link waiting for the 3D page's display
         self.store_panel = w.VBox(
             [w.HTML('<div style="font-size:11px;color:#666">include in the file (unchecked groups are '
                     'left out, so a file can be a partial template):</div>')]
@@ -1229,9 +1233,16 @@ class ReflectionsApp:
         if hasattr(self, "d_w"):
             msg["detectors"] = [[k, v[0], v[1]] for k, v in dif.DETECTOR_PRESETS.items()]
             msg["detector"] = {"w": float(self.d_w.value), "h": float(self.d_h.value)}
+        # The page reads the newest payload every 150 ms, so a display block sent
+        # in only one push of a burst (a restore pushes several) can be missed:
+        # it rides on every push for DISPLAY_HOLD seconds (applying it again is harmless).
+        now = time.monotonic()
         if self.display_settings is not None:
-            msg["display"] = self.display_settings          # sent once
+            held = self._display_out[0] if self._display_out and now < self._display_out[1] else {}
+            self._display_out = ({**held, **self.display_settings}, now + DISPLAY_HOLD)
             self.display_settings = None
+        if self._display_out and now < self._display_out[1]:
+            msg["display"] = self._display_out[0]
         if self._restore_done:
             msg["memory"] = {"remember": bool(self.remember.value), "ops": list(self._memory_ops)}
         if self._forget:
@@ -1392,12 +1403,28 @@ class ReflectionsApp:
         return state
 
     def link_state(self) -> dict:
-        """What a link carries: everything autosave_state() has (not the 3D page's display)."""
+        """What a link carries: everything autosave_state() has; the 3D page's
+        display settings are added when the page reports them (make_link)."""
         return self.autosave_state()
 
-    def make_link(self, _b=None) -> dict:
-        """Show the links to the current state; returns {name: url}."""
-        links = state_links(encode_link_state(self.link_state()), self.page_address)
+    def make_link(self, _b=None, display: dict | None = None) -> dict:
+        """Show the links to the current state; returns {name: url}.
+
+        Python cannot read the 3D page's display settings, so the click shows
+        the links at once without them and asks the page to keep the state as
+        a "link" snapshot: the page stores it with its display and reports it
+        back (_apply_memory_report), and the links are rebuilt with it."""
+        state = self.link_state()
+        if display is None and self._restore_done:
+            self._link_pending = json.loads(json.dumps(state))   # as it comes back from the page
+            self._memory_seq += 1
+            self._memory_ops.append({"op": "add", "kind": "link", "seq": self._memory_seq,
+                                     "name": "link", "state": state})
+            self.push_view()
+        return self._show_links(dict(state, display=display) if display else state, display is not None)
+
+    def _show_links(self, state: dict, with_display: bool) -> dict:
+        links = state_links(encode_link_state(state), self.page_address)
         size = max(len(u) for u in links.values())
         warn = (_note(f" these are long ({size} characters): some servers refuse such addresses; "
                       "a config file always works", "#a60") if size > LINK_LONG else "")
@@ -1406,6 +1433,9 @@ class ReflectionsApp:
             + " &middot; ".join(f'<a href="{html.escape(u)}" target="_blank">{html.escape(k)}</a>'
                                 for k, u in links.items())
             + ' <span style="color:#666">(right-click to copy; the browser one below to paste)</span>'
+            + (' <span style="color:#282">with the 3D view\'s settings</span>' if with_display else
+               ' <span style="color:#888">(the 3D view\'s settings follow ...)</span>' if self._link_pending
+               else "")
             + warn + "</div>")
         self.link_text.value = links["in the browser"]
         self.link_text.layout.display = "flex"
@@ -1513,6 +1543,12 @@ class ReflectionsApp:
             self.snap_list.value = keep if keep in ids else (ids[0] if ids else "")
         finally:
             self._memory_loading = False
+        if self._link_pending is not None:    # the link's snapshot is back, with the page's display
+            snap = next((x for x in reversed(self.snapshots) if x.get("kind") == "link"
+                         and x.get("state") == self._link_pending and isinstance(x.get("display"), dict)), None)
+            if snap is not None:
+                self._link_pending = None
+                self._show_links(dict(snap["state"], display=snap["display"]), True)
         if self.snap_btn.disabled:            # the first report: the controls work now
             self._set_memory_enabled(True)
             self.memory_msg.value = ""
@@ -1526,7 +1562,7 @@ class ReflectionsApp:
         when = snap.get("savedText")                   # the browser's local time
         if not when and isinstance(snap.get("saved"), (int, float)):
             when = datetime.fromtimestamp(snap["saved"] / 1000).strftime("%Y-%m-%d %H:%M")
-        prefix = "config: " if snap.get("kind") == "config" else "★ "
+        prefix = {"config": "config: ", "link": "link: "}.get(snap.get("kind"), "★ ")
         return prefix + name + (f" · {when}" if when else "")
 
     def _snapshot(self, sid=None) -> dict | None:

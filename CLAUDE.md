@@ -190,8 +190,15 @@ escape-fel >= 0.3.5: `energy` passed through to hklforge).
   (`Structure.to_dict()`: sites, space group, ops only if not the group's)
   with the sample group; a sample without it clears the CIF. Autosave,
   snapshots and links carry it too.
-- **Links**: *link to this state* encodes `autosave_state()` (not the 3D
-  page's display) as `?state=` base64url(zlib(JSON)), ~1 KB with a CIF.
+- **Links**: *link to this state* encodes `autosave_state()` as `?state=`
+  base64url(zlib(JSON)), ~1 KB with a CIF. Python cannot read the 3D page's
+  display, so the click shows the link at once and sends a memory op
+  `add` with `kind: "link"`; the page stores it as a snapshot with
+  `getDisplay()` and reports it back, and the link is rebuilt with
+  `display` (works with the released page, no hklforge change).
+- **Display blocks ride on pushes for `DISPLAY_HOLD` (3 s)**, not on one:
+  the page reads the newest payload every 150 ms, and a restore pushes
+  several in a row, so a display sent once could be overwritten unseen.
   On the first offer the app reads it from the page's `address` (the 3D
   page reports `parent.location`, hklforge >= 0.2.3, so it works under voila
   and voici alike), else from voila's `QUERY_STRING`; a link wins over the
