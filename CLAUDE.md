@@ -196,7 +196,8 @@ escape-fel >= 0.3.5: `energy` passed through to hklforge).
   page reports `parent.location`, hklforge >= 0.2.3, so it works under voila
   and voici alike), else from voila's `QUERY_STRING`; a link wins over the
   remembered state (that stays a snapshot). Binder links pass it inside
-  `urlpath`; a JupyterHub `/user/` address is not offered (dies with the
+  `urlpath`; the browser (Pages) link comes first and fills the copy box; a
+  JupyterHub `/user/` address is not offered (dies with the
   session). Verified end to end in voila + Chrome (CDP), 2026-11-20.
 - **xraydb is optional**: without it there are no structure factors and
   grazing incidence needs δ and β typed in.

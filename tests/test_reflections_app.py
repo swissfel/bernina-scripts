@@ -457,6 +457,8 @@ def test_link_carries_the_whole_state(app):
     app.page_address = "http://localhost:8866/voila/render/apps/diffraction_reflections.ipynb?x=1"
     links = app.make_link()
     assert set(links) == {"this address", "Binder", "in the browser"}
+    assert list(links)[0] == "in the browser" and app.link_text.value == links["in the browser"]   # Pages first
+    assert app.link_text.value.startswith(ra.BROWSER_URL + "?state=")
     assert all(len(u) < ra.LINK_LONG for u in links.values()) and "a config file" not in app.link_html.value
     here = urlsplit(links["this address"])
     assert parse_qs(here.query)["x"] == ["1"] and here.path.endswith("diffraction_reflections.ipynb")

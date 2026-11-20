@@ -215,16 +215,16 @@ def with_state(address: str, param: str) -> str:
 
 
 def state_links(param: str, address: str | None = None) -> dict:
-    """{name: url} opening the app with this state: on Binder, in the browser
-    version and, when known, at the address it runs at now."""
-    links = {}
+    """{name: url} opening the app with this state: in the browser version
+    (first: no server, opens fastest), on Binder and, when known, at the
+    address it runs at now."""
+    links = {"in the browser": with_state(BROWSER_URL, param)}
     here = urlsplit(address or "")
     # not a JupyterHub session (Binder's /user/...: gone with the session), not the browser version
     if (here.scheme in ("http", "https") and "/user/" not in here.path
             and here.netloc != urlsplit(BROWSER_URL).netloc):
         links["this address"] = with_state(address, param)
     links["Binder"] = f"{BINDER_URL}?urlpath=" + quote(f"voila/render/{APP_NOTEBOOK}?{LINK_PARAM}={param}", safe="")
-    links["in the browser"] = with_state(BROWSER_URL, param)
     return links
 
 
@@ -1405,9 +1405,9 @@ class ReflectionsApp:
             '<div style="font-size:12px">open the app in this state: '
             + " &middot; ".join(f'<a href="{html.escape(u)}" target="_blank">{html.escape(k)}</a>'
                                 for k, u in links.items())
-            + ' <span style="color:#666">(right-click to copy; the Binder one below to paste)</span>'
+            + ' <span style="color:#666">(right-click to copy; the browser one below to paste)</span>'
             + warn + "</div>")
-        self.link_text.value = links.get("this address") or links["Binder"]
+        self.link_text.value = links["in the browser"]
         self.link_text.layout.display = "flex"
         return links
 
