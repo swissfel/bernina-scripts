@@ -39,13 +39,16 @@ def test_absences():
 
 
 def test_cif_structure_factors():
-    st = cry.read_cif(DATA / "Bi2Se3.cif")
-    assert st.formula == "Bi2Se3" and abs(st.density - 7.66) < 0.05 and st.z_electrons == 804
-    assert st.structure_factor((0, 0, 1)) < 1e-6 and st.structure_factor((0, 0, 3)) > 50
-    assert abs(st.structure_factor((0, 0, 0)) - 804) < 2          # F(000) = electrons per cell
-    df = cry.reflection_list(st.cell, 9000, structure=st, d_min=2.0)
+    st = cry.read_cif(DATA / "Si.cif")
+    assert st.formula == "Si" and abs(st.density - 2.33) < 0.01 and st.z_electrons == 112
+    assert len(st.atoms()[1]) == 8                                # diamond: 8 atoms per cell
+    assert st.structure_factor((2, 0, 0)) < 1e-6                  # d glide
+    assert st.structure_factor((2, 2, 2)) < 1e-6                  # allowed by symmetry, F = 0 by the positions
+    assert st.structure_factor((1, 1, 1)) > 50 and st.structure_factor((2, 2, 0)) > 50
+    assert abs(st.structure_factor((0, 0, 0)) - 112) < 1          # F(000) = electrons per cell
+    df = cry.reflection_list(st.cell, 9000, structure=st, d_min=1.0)
     found = set(zip(df.h, df.k, df.l))
-    assert {(0, 0, 3), (0, 0, 6)} <= found
+    assert {(1, 1, 1), (2, 2, 0), (3, 1, 1)} <= found
     assert len(found & set(st.space_group.equivalents((1, 0, -5)))) == 1   # one of each set
     assert {"|F|", "|F|²", "mult", "why not"} <= set(df.columns)
     assert not df[(df.h == 0) & (df.k == 0) & (df.l == 1)]["allowed"].any() if len(df) else True

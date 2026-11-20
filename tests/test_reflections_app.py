@@ -17,6 +17,12 @@ from bernina_prep.reflections_app import ReflectionsApp, load_presets
 DATA = Path(__file__).parent / "data"
 
 
+def _load_si_cif(app):
+    """Load tests/data/Si.cif as the CIF upload widget would."""
+    content = (DATA / "Si.cif").read_bytes()
+    app._on_cif({"new": ({"name": "Si.cif", "content": memoryview(content)},)})
+
+
 @pytest.fixture
 def app():
     return ReflectionsApp()
@@ -110,11 +116,22 @@ def test_tools_run(app):
     assert app.results["grazing"]["critical angle"] == pytest.approx(0.179, abs=1e-3)
 
 
-def test_cif_upload_fills_sample(app):
-    content = (DATA / "Bi2Se3.cif").read_bytes()
-    app._on_cif({"new": ({"name": "Bi2Se3.cif", "content": memoryview(content)},)})
-    assert app.ctrl["uc_gamma"].value == 120 and "R -3 m" in app.ctrl["space_group"].value
-    assert "Bi2Se3" in app.g_formula.value and 7.5 < app.g_density.value < 7.8
+# the test CIFs: (file, a, gamma, space group, formula, density g/cm3, atoms per cell)
+CIFS = [("Si", 5.4309, 90, "F d -3 m", "Si", 2.33, 8),
+        ("GaAs", 5.6533, 90, "F -4 3 m", "GaAs", 5.32, 8),
+        ("SrTiO3", 3.905, 90, "P m -3 m", "SrTiO3", 5.12, 5),
+        ("Bi2Se3", 4.143, 120, "R -3 m", "Bi2Se3", 7.66, 15)]       # hexagonal axes
+
+
+@pytest.mark.parametrize("name, a, gamma, sg, formula, density, atoms", CIFS)
+def test_cif_upload_fills_sample(app, name, a, gamma, sg, formula, density, atoms):
+    content = (DATA / f"{name}.cif").read_bytes()
+    app._on_cif({"new": ({"name": f"{name}.cif", "content": memoryview(content)},)})
+    assert app.ctrl["uc_a"].value == a and app.ctrl["uc_gamma"].value == gamma
+    assert sg in app.ctrl["space_group"].value and len(app.structure.atoms()[1]) == atoms
+    assert app.g_formula.value == formula and abs(app.g_density.value - density) < 0.02
+    cfg = json.loads(json.dumps(app.current_config(everything=True)))        # kept in a config
+    assert len(cfg["structure"]["sites"]) == len(app.structure.sites)
 
 
 def _payload(app):
@@ -250,9 +267,8 @@ def test_two_reflections_rows_and_second_detector(app):
 
 def test_table_groups_and_crystal_columns(app):
     from escape.bernina import diffraction as dif
-    content = (DATA / "Bi2Se3.cif").read_bytes()
-    app._on_cif({"new": ({"name": "Bi2Se3.cif", "content": memoryview(content)},)})
-    app.ctrl["orientations"].value = "(0,0,1) > (0,1,0)\n(1,0,0) > (1,0,0)"     # c along the beam-up plane
+    _load_si_cif(app)
+    app.ctrl["orientations"].value = "(0,0,1) > (0,1,0)\n(1,0,0) > (1,0,0)"     # c up
     app.t_source.value, app.t_dmin.value, app.t_max.value = "all", 2.0, 60
     app.run_table()
     t = app.results["table"]
@@ -407,8 +423,7 @@ def test_energy_free_offered_solved_and_followed(app):
 
 
 def test_cif_structure_kept_in_config_and_removable(app):
-    content = (DATA / "Bi2Se3.cif").read_bytes()
-    app._on_cif({"new": ({"name": "Bi2Se3.cif", "content": memoryview(content)},)})
+    _load_si_cif(app)
     assert app.cif_clear.layout.display == "flex"
     cfg = json.loads(json.dumps(app.current_config(everything=True)))
     assert cfg["version"] == 3 and len(cfg["structure"]["sites"]) == len(app.structure.sites)
@@ -434,10 +449,9 @@ def test_link_carries_the_whole_state(app):
     from urllib.parse import parse_qs, unquote, urlsplit
 
     from bernina_prep import reflections_app as ra
-    content = (DATA / "Bi2Se3.cif").read_bytes()
-    app._on_cif({"new": ({"name": "Bi2Se3.cif", "content": memoryview(content)},)})
+    _load_si_cif(app)
     app.ctrl["orientations"].value = "(0,0,1) > up\n(1,0,0) > beam"
-    app.ctrl["h"].value, app.ctrl["k"].value, app.ctrl["l"].value = 0.0, 0.0, 6.0
+    app.ctrl["h"].value, app.ctrl["k"].value, app.ctrl["l"].value = 0.0, 0.0, 4.0
     app.ctrl["energy"].value = 9500.0
     app.filters["delta"][1].value = "120"
     app.page_address = "http://localhost:8866/voila/render/apps/diffraction_reflections.ipynb?x=1"
@@ -454,7 +468,7 @@ def test_link_carries_the_whole_state(app):
     new = ReflectionsApp()
     new.state_from_view.value = json.dumps({"kind": "offer", "address": links["in the browser"],
                                             "state": {"energy": 7000.0}})
-    assert new.ctrl["energy"].value == 9500.0 and new.hkl() == [0.0, 0.0, 6.0]
+    assert new.ctrl["energy"].value == 9500.0 and new.hkl() == [0.0, 0.0, 4.0]
     assert new.filters["delta"][1].value == "120" and new.ctrl["orientations"].value.startswith("(0,0,1)")
     assert new.structure is not None and new.structure.name == app.structure.name
     assert "the link" in new.restore_note.value and new.page_address == links["in the browser"]
