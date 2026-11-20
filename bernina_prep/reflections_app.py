@@ -37,6 +37,11 @@ from hklforge.view import iframe as view_iframe
 from hklforge.view import message as view_message
 from hklforge.view import page as view_page
 from hklforge.view import payload_html
+
+try:
+    from hklforge.view import structure_factor_nodes
+except ImportError:                    # hklforge without the structure-factor spheres
+    structure_factor_nodes = None
 from hklforge.virtual import virtual_angles
 
 from escape.bernina import detector_view as dv
@@ -666,6 +671,7 @@ class ReflectionsApp:
     def _build_view(self):
         self.view_frame = widgets.HTML(view_iframe(bernina_view_page(), 760, VIEW_ID), layout=L(width="100%"))
         self._bz_key, self._bz = None, None
+        self._sf_key, self._sf = None, None
         self.payload_holder = widgets.HTML()
         # the 3D page writes its detector choice here (see its sendDetector)
         self.det_from_view = widgets.Text(layout=L(display="none"))
@@ -1256,6 +1262,8 @@ class ReflectionsApp:
         msg = view_message(None, dif._complete(angles), k=dif.k_magnitude(self.energy()), label=label,
                            targets=targets, n=self._pushes, ub=None if s is None else s.UB,
                            special_points=self._special_points())
+        if structure_factor_nodes is not None:   # the 3D view's spheres (None: no structure)
+            msg["structureFactors"] = self._structure_factors()
         if s is not None:      # sent as None too, so that emptying a field clears it in the view
             msg["nPhi"] = None if s.n_surface is None else [float(x) for x in s.n_surface]
             msg["refPhi"] = None if s.n_reference is None else [float(x) for x in s.n_reference]
@@ -1292,6 +1300,20 @@ class ReflectionsApp:
         self.payload_holder.value = payload_html(msg, VIEW_ID)
         if getattr(self, "d_follow", None) is not None and self.d_follow.value and self._det is not None:
             self.run_detector()
+
+    def _structure_factors(self) -> dict | None:
+        """|F|^2 of every reflection reachable at the energy, for the 3D view's
+        structure-factor spheres (cached per structure and energy), or None."""
+        if self.structure is None:
+            return None
+        key = (self.structure, round(self.energy(), 1))     # the object itself: a new CIF is a new one
+        if self._sf_key is None or key[0] is not self._sf_key[0] or key[1] != self._sf_key[1]:
+            try:
+                sf = structure_factor_nodes(self.structure, self.energy())
+            except Exception:                  # xraydb missing, or far too many reflections
+                sf = None
+            self._sf_key, self._sf = key, sf
+        return self._sf
 
     def _special_points(self) -> dict | None:
         """Brillouin-zone special points of the cell and space group (cached), or None."""

@@ -598,3 +598,30 @@ def test_start_fresh_after_a_link_drops_the_link(app):
     plain.state_from_view.value = json.dumps({"kind": "offer", "address": "http://localhost:8866/a.ipynb"})
     plain.fresh_btn.click()
     assert "reloadTo" not in _payload(plain)
+
+
+def test_structure_factors_to_3d_view(app):
+    """With a CIF the 3D view gets |F|^2 of every reachable reflection
+    (its structure-factor spheres), recomputed when the energy changes and
+    cleared with the CIF; without a CIF it gets None."""
+    pytest.importorskip("xraydb")
+    view = pytest.importorskip("hklforge.view")
+    if not hasattr(view, "structure_factor_nodes"):
+        pytest.skip("hklforge without structure-factor spheres")
+    app.push_view()
+    assert _payload(app)["structureFactors"] is None
+    _load_si_cif(app)
+    app.push_view()
+    sf = _payload(app)["structureFactors"]
+    want = view.structure_factor_nodes(app.structure, app.energy())
+    assert sf["hkl"] == want["hkl"] and np.allclose(sf["f2"], want["f2"], rtol=1e-12)
+    assert sf["energy"] == pytest.approx(app.energy())
+    assert [1, 1, 1] in sf["hkl"] and [0, 0, 2] not in sf["hkl"]      # (002) forbidden in Si
+    old = len(sf["hkl"])
+    app.ctrl["energy"].value = app.energy() + 3000                    # more reflections reachable
+    app.push_view()
+    sf2 = _payload(app)["structureFactors"]
+    assert sf2["energy"] == pytest.approx(app.energy()) and len(sf2["hkl"]) > old
+    app._clear_cif()
+    app.push_view()
+    assert _payload(app)["structureFactors"] is None
