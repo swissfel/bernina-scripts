@@ -14,7 +14,7 @@ requires-python = ">=3.10"
 # of which only that subpackage is used - Binder and the browser build install
 # it without its data-stack dependencies
 dependencies = ["numpy", "scipy", "pandas", "matplotlib", "ipywidgets>=8.1,<9", "ipympl>=0.9.4",
-                "hklforge>=0.2.3", "escape-fel>=0.3.5"]
+                "hklforge>=0.2.4", "escape-fel>=0.3.5"]
 
 [project.optional-dependencies]
 crystal = ["xraydb"]          # form factors, optical constants

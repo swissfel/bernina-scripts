@@ -25,7 +25,7 @@ voila = "*"            # do NOT pin <0.5.8 - see binder/environment.yml
 jupyterlab = "*"       # local editing; harmless alongside voila
 
 [pypi-dependencies]
-hklforge = ">=0.2.3"      # hklforge.crystal (Structure.to_dict), hklforge.view (3D page), free energy
+hklforge = ">=0.2.4"      # hklforge.crystal (Structure.to_dict), hklforge.view (3D page), free energy
 escape-fel = ">=0.3.5"    # with escape.bernina (free energy) (Binder/browser install it without its deps)
 xraydb = "*"
 gemmi = "*"               # apps/dev/sg_explorer.py only
