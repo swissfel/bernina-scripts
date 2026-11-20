@@ -175,7 +175,12 @@ escape-fel >= 0.3.5: `energy` passed through to hklforge).
   its precomputed envelope is a single curve without a stated inside.
 - **Free energy** (hklforge >= 0.2.2): `constraints["energy"] = (lo, hi)`
   eV makes the energy one more unknown (one more angle held); solutions get
-  an `energy` row. In the app, *let the energy vary* sets it; `select()`
+  an `energy` row. The energy and the second reflection are constraint rows
+  in the angles tab (as in eco, where `constraints.energy` is None = the
+  beamline energy and `constraints.h2` None): `energy_fixed` (ticked by
+  default) and the limits in `self.filters["energy"]`, so configs carry them
+  in "fixed"/"filters"; a file without `fixed.energy` holds it; a setup
+  holds it again and drops h2. `select()`
   writes the selected solution's energy into the energy field (suspended, no
   re-solve), so the 3D view and every tool use it. hklforge's ModeError
   ends in `ENERGY_HINT` when freeing the energy would help: the app strips

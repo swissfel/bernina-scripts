@@ -117,17 +117,18 @@ other, with the rotation (for phi: the change of phi) between them.</p>
 <p><b>Solving.</b> Tick <i>fix</i> for the three angles you hold (circles and/or
 virtual angles under <i>more constraints</i>); the others follow. Each solution
 branch is a column. <i>min/max</i> drop branches outside a range; a circle with
-both bounds may be shifted by 360. <i>two reflections</i> holds a second reflection
-in Bragg condition too (it counts as one constraint). The table then adds the angle
+both bounds may be shifted by 360. A second reflection (<i>2nd (h,k,l)</i>, normally
+not held) can be kept in Bragg condition too; it counts as one constraint. The table then adds the angle
 between the two scattering vectors and between their outgoing beams, and, for the
 reflection the detector is not on, where gamma and delta would put it there with the
 virtual angles of that reflection (2theta, qaz, beta, betaout, psi, tau, omega; the
 sample angles, alpha, betain and naz are the same for both). The 3D view draws that
 second detector position translucent, with its own cut of the Ewald sphere.</p>
 
-<p><b>Energy as an unknown.</b> <i>let the energy vary, within</i> (reflection tab)
-makes the photon energy one more unknown, between the limits given (empty: 1 - 30 keV).
-Hold one angle more than usual - e.g. the whole crystal (Laue-like: which energy brings
+<p><b>Energy and second reflection as constraints.</b> Both are rows in the
+<i>angles</i> tab. The energy is normally held (<i>fix</i>) at the value set; unticked,
+it is one more unknown within its min/max (empty: 1 - 30 keV), and one more angle has
+to be held - e.g. the whole crystal (Laue-like: which energy brings
 (h,k,l) into Bragg condition, and where the detector goes) or the detector (which
 energy and sample angles reach it there). Each solution then has its own energy, and the
 energy field follows the selected solution, so the 3D view and the tools use it. When
@@ -442,25 +443,35 @@ class ReflectionsApp:
                                            readout=False,
                                            continuous_update=False, layout=L(width="170px"))
         w.link((self.ctrl["energy"], "value"), (self.energy_slider, "value"))
-        # the energy as one more unknown, within limits (hklforge >= 0.2.2); then the
-        # energy above follows the selected solution (select), so every tool uses it
-        self.ctrl["energy_free"] = w.Checkbox(value=False, description="let the energy vary, within",
-                                              indent=False, layout=L(width="190px"))
-        self.ctrl["energy_min"] = w.Text(value="", placeholder=f"{ENERGY_LIMITS[0]:g}", layout=L(width="70px"))
-        self.ctrl["energy_max"] = w.Text(value="", placeholder=f"{ENERGY_LIMITS[1]:g}", layout=L(width="70px"))
         self.energy_free_msg = w.HTML()
-        self.ctrl["two"] = w.Checkbox(value=False, description="keep a second reflection in Bragg condition",
-                                      indent=False, layout=L(width="320px"))
-        for n in ("h2", "k2", "l2"):
-            self.ctrl[n] = w.FloatText(value=0.0 if n != "l2" else 1.0, step=1, description=n[0],
-                                       layout=L(width=HKL_W), style={"description_width": "20px"})
-        self.ctrl["detector"] = w.Dropdown(options=[(v, k) for k, v in dif.DETECTOR_POLICIES.items()],
-                                           value="h1", layout=L(width="240px"))
         self.target_msg = w.HTML()
 
-        # angles: value, min, max, fix
+        # constraints (angles tab): value, min, max, fix
         self.filters = {}
         self.angle_rows = {}
+        # the energy is a constraint too, held at the energy above unless "fix" is
+        # unticked: then it is one more unknown within min/max (hklforge >= 0.2.2), and
+        # the energy above follows the selected solution (select), so every tool uses it
+        self.ctrl["energy_fixed"] = w.Checkbox(value=True, description="fix", indent=False, layout=L(width="48px"))
+        energy_value = w.BoundedFloatText(value=9000, min=ENERGY_LIMITS[0], max=ENERGY_LIMITS[1],
+                                          layout=L(width=FIELD_W))
+        w.link((self.ctrl["energy"], "value"), (energy_value, "value"))
+        self.filters["energy"] = (w.Text(placeholder=f"{ENERGY_LIMITS[0]:g}", layout=L(width=FILTER_W)),
+                                  w.Text(placeholder=f"{ENERGY_LIMITS[1]:g}", layout=L(width=FILTER_W)))
+        self.energy_row = w.HBox([w.Label("energy", layout=L(width=LABEL_W)), energy_value, *self.filters["energy"],
+                                  self.ctrl["energy_fixed"], w.Label("eV")])
+        # a second reflection kept in Bragg condition: a constraint, normally not held
+        self.ctrl["two"] = w.Checkbox(value=False, description="fix", indent=False, layout=L(width="48px"),
+                                      tooltip="keep this second reflection in Bragg condition too (counts as one "
+                                              "constraint)")
+        for n in ("h2", "k2", "l2"):
+            self.ctrl[n] = w.FloatText(value=0.0 if n != "l2" else 1.0, step=1, layout=L(width="52px"))
+        self.ctrl["detector"] = w.Dropdown(options=[(v, k) for k, v in dif.DETECTOR_POLICIES.items()],
+                                           value="h1", layout=L(width="220px"))
+        self.h2_row = w.VBox([
+            w.HBox([w.Label("2nd (h,k,l)", layout=L(width=LABEL_W)), self.ctrl["h2"], self.ctrl["k2"],
+                    self.ctrl["l2"], self.ctrl["two"]], layout=L(align_items="center")),
+            w.HBox([w.Label("", layout=L(width=LABEL_W)), self.ctrl["detector"]])])
         for name in dif.CIRCLES + dif.VIRTUAL_CONSTRAINTS:
             self.ctrl[name] = w.FloatText(value=DEFAULT_HELD.get(name, 0.0), layout=L(width=FIELD_W))
             self.ctrl[f"{name}_fixed"] = w.Checkbox(value=name in DEFAULT_HELD, description="fix", indent=False,
@@ -493,10 +504,9 @@ class ReflectionsApp:
         ])
         self.tab_reflection = w.VBox([
             w.HBox([c["h"], c["k"], c["l"]]), w.HBox([c["energy"], self.energy_slider]),
-            w.HBox([c["energy_free"], c["energy_min"], w.Label("to"), c["energy_max"], w.Label("eV")],
-                   layout=L(align_items="center")),
             self.energy_free_msg, self.target_msg,
-            w.HTML("<b>two reflections</b>"), c["two"], w.HBox([c["h2"], c["k2"], c["l2"]]), c["detector"],
+            w.HTML('<div style="font-size:11px;color:#666;width:400px;margin-top:6px">the energy and a '
+                   'second reflection are constraints as well: <i>angles</i> tab</div>'),
         ])
         # scan one held value: how many solutions (passing the min/max) along it
         self.s_name = w.Dropdown(options=[("(hold a value first)", "")], description="scan",
@@ -521,7 +531,8 @@ class ReflectionsApp:
             w.HBox([self.s_name, self.s_btn]), w.HBox([self.s_from, self.s_to, self.s_steps]),
             self.s_msg, self.s_figure.widget], layout=L(border_top="1px solid #ddd", margin="10px 0 0 0"))
         self.tab_angles = w.VBox([header] + [self.angle_rows[n] for n in dif.CIRCLES]
-                                 + [self.more_constraints, self.held_msg, self.scan_box])
+                                 + [self.energy_row, self.h2_row, self.more_constraints, self.held_msg,
+                                    self.scan_box])
 
     # ================================================================ config
 
@@ -902,7 +913,7 @@ class ReflectionsApp:
         if self.s_figure.canvas is not None:
             self.s_figure.canvas.mpl_connect("button_press_event", self._scan_click)
         self.g_btn.on_click(self.run_grazing)
-        self.energy_btn.on_click(lambda _b: setattr(self.ctrl["energy_free"], "value", not self.energy_free()))
+        self.energy_btn.on_click(lambda _b: setattr(self.ctrl["energy_fixed"], "value", self.energy_free()))
 
     def _round_hkl(self, change):
         rounded = round(float(change["new"]), HKL_DECIMALS)
@@ -937,11 +948,12 @@ class ReflectionsApp:
         return cons
 
     def energy_free(self) -> bool:
-        return bool(self.ctrl["energy_free"].value)
+        return not self.ctrl["energy_fixed"].value
 
     def energy_limits(self) -> tuple:
-        """(lo, hi) eV within which a free energy may go; empty fields: the energy field's range."""
-        lo, hi = _num_or_none(self.ctrl["energy_min"].value), _num_or_none(self.ctrl["energy_max"].value)
+        """(lo, hi) eV within which a free energy may go (the energy row's min/max);
+        empty fields: the energy field's range."""
+        lo, hi = (_num_or_none(t.value) for t in self.filters["energy"])
         lo = ENERGY_LIMITS[0] if lo is None else min(max(lo, ENERGY_LIMITS[0]), ENERGY_LIMITS[1])
         hi = ENERGY_LIMITS[1] if hi is None else min(max(hi, ENERGY_LIMITS[0]), ENERGY_LIMITS[1])
         return (lo, hi) if lo <= hi else (hi, lo)
@@ -1332,6 +1344,7 @@ class ReflectionsApp:
             for n, (lo, hi) in self.filters.items():
                 lo.value, hi.value = (f"{v:g}" for v in ranges[n]) if n in ranges else ("", "")
             self.ctrl["two"].value = False
+            self.ctrl["energy_fixed"].value = True
             self.preset.value = ""
         finally:
             self._suspend = False
@@ -1353,12 +1366,10 @@ class ReflectionsApp:
             cfg["hkl"] = {n: self.ctrl[n].value for n in ("h", "k", "l", "two", "h2", "k2", "l2", "detector")}
         if inc["energy"]:
             cfg["energy"] = self.ctrl["energy"].value
-            cfg["energy_free"] = {"free": self.energy_free(), "min": self.ctrl["energy_min"].value,
-                                  "max": self.ctrl["energy_max"].value}
         if inc["angles"]:
             cfg["angles"] = {n: self.ctrl[n].value for n in dif.CIRCLES + dif.VIRTUAL_CONSTRAINTS}
         if inc["fixed"]:
-            cfg["fixed"] = {n: self.ctrl[f"{n}_fixed"].value for n in dif.CONSTRAINTS}
+            cfg["fixed"] = {n: self.ctrl[f"{n}_fixed"].value for n in dif.CONSTRAINTS + ("energy",)}
         if inc["filters"]:
             cfg["filters"] = {n: [lo.value, hi.value] for n, (lo, hi) in self.filters.items()}
         if inc["layout"]:
@@ -1629,17 +1640,13 @@ class ReflectionsApp:
         if "energy" in cfg:
             self.ctrl["energy"].value = cfg["energy"]
             applied.append("energy")
-        ef = cfg.get("energy_free")
-        if isinstance(ef, dict):
-            self.ctrl["energy_free"].value = bool(ef.get("free"))
-            self.ctrl["energy_min"].value = str(ef.get("min") or "")
-            self.ctrl["energy_max"].value = str(ef.get("max") or "")
-            applied.append("energy_free")
         for name, value in (cfg.get("angles") or {}).items():
             name = legacy(name)
             if name in self.ctrl and name not in dif.BOOL_CONSTRAINTS and not isinstance(value, bool):
                 self.ctrl[name].value = float(value)
                 applied.append(name)
+        if isinstance(cfg.get("fixed"), dict) and "energy" not in cfg["fixed"]:
+            self.ctrl["energy_fixed"].value = True     # files from before held it, always
         for name, value in (cfg.get("fixed") or {}).items():
             name = legacy(name)
             if name in dif.UNSUPPORTED:

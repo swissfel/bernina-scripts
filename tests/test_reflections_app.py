@@ -388,7 +388,7 @@ def test_energy_free_offered_solved_and_followed(app):
     assert np.allclose(app.sample.hkl_at(angles, app.energy()), app.hkl(), atol=1e-4)
     assert _payload(app)["kMag"] == pytest.approx(dif.k_magnitude(e), rel=1e-6)
     # limits that exclude it
-    app.ctrl["energy_min"].value, app.ctrl["energy_max"].value = "9000", "12000"
+    app.filters["energy"][0].value, app.filters["energy"][1].value = "9000", "12000"
     assert not app.cols and "9000 - 12000" in app.solve_msg.value
     # one held less: complete at a fixed energy, so the app offers to fix it again
     app.ctrl["mu_fixed"].value = False
@@ -396,9 +396,9 @@ def test_energy_free_offered_solved_and_followed(app):
     app.energy_btn.click()
     assert not app.energy_free() and app.cols and "energy" not in app.df.index
     # stored and read back
-    app.ctrl["energy_free"].value = True
+    app.ctrl["energy_fixed"].value = False
     cfg = json.loads(json.dumps(app.current_config(everything=True)))
-    assert cfg["energy_free"] == {"free": True, "min": "9000", "max": "12000"}
+    assert cfg["fixed"]["energy"] is False and cfg["filters"]["energy"] == ["9000", "12000"]
     new = ReflectionsApp()
     new._suspend = True
     new.apply_config(cfg)
@@ -472,3 +472,25 @@ def test_link_from_voila_query_string_and_bad_link(app, monkeypatch):
     new.state_from_view.value = json.dumps({"kind": "offer", "address": "http://a/b?state=nonsense",
                                             "state": {"energy": 7000.0}})
     assert "could not be read" in new.restore_note.value and new.ctrl["energy"].value == 7000.0
+
+
+def test_energy_and_second_reflection_are_constraints(app):
+    # the defaults: the energy held at the value set, no second reflection
+    assert app.ctrl["energy_fixed"].value and not app.ctrl["two"].value and not app.energy_free()
+    assert "energy" not in app.constraints() and "h2" not in app.constraints()
+    assert app.energy_row in app.tab_angles.children and app.h2_row in app.tab_angles.children
+    # the energy row's value is the energy
+    app.energy_row.children[1].value = 8800.0
+    assert app.energy() == 8800.0
+    app.ctrl["energy_fixed"].value = False
+    app.ctrl["two"].value = True
+    assert app.constraints()["energy"] == (1000.0, 30000.0) and "h2" in app.constraints()
+    # a setup puts everything back to its default, like eco's set_constraints
+    app.load_preset("thc")
+    assert app.ctrl["energy_fixed"].value and not app.ctrl["two"].value
+    # files from before had no energy under "fixed": the energy was held
+    app.ctrl["energy_fixed"].value = False
+    app._suspend = True
+    app.apply_config({"fixed": {"mu": True}})
+    app._suspend = False
+    assert app.ctrl["energy_fixed"].value
